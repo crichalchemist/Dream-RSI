@@ -1,0 +1,76 @@
+# Dream-RSI, reconstructed from the paper
+
+An independent reimplementation of the Dream-RSI exploration layer, built only
+from `papers/Dream-RSI.pdf` and the public SimpleTES benchmark. It is not the
+authors' code, which is still unreleased. Everything the paper leaves
+unspecified is listed with the choice made here in [GAPS.md](GAPS.md). Read
+that file before trusting any number this code produces.
+
+## Status
+
+| Part | Source | State |
+|---|---|---|
+| Replay simulator and policy API (`see.policy.api`, `see.policy.observation_signal`) | Sec. 3, Listing 2 | implemented and tested; same import paths as the paper's prompt |
+| Objectives: Eq. (1) and the beta-sweep `pareto.reward` | Sec. 3, Listing 2 | implemented; AUC/attainment details inferred |
+| Parallel-refine initial policy | Sec. 4 | implemented |
+| Online rollout: workspaces, parallel workers, agent + evaluator | Sec. 3, Listing 1 | implemented; tested with scripted agents and the real Lasso evaluator |
+| Outer loop: online, pool, M versions, argmax deploy | Sec. 3, Fig. 1 | implemented; tested end to end with scripted agents |
+| Prompts (Listings 1, 2) and discovered Lasso solver (Listing 3) | appendix | regenerated from the PDF, verbatim |
+| Lasso and math tasks | SimpleTES | adapter (`see/tasks.py`) |
+| KernelBench tasks | KernelBench | no adapter |
+| Runs with real LLM agents | Gemini CLI or other | wired (`scripts/run_dream_rsi.py`), not run here |
+
+The core package is standard-library Python.
+
+## Use
+
+```bash
+cd reconstruction
+pip install -r requirements.txt
+python tools/extract_listings.py          # writes generated/: 2 prompts + the Lasso solver
+python -m pytest -q tests                 # 38 tests
+python -m see demo --workdir /tmp/drsi    # whole loop on a toy task, scripted agents
+```
+
+Check the paper's Lasso solver against SimpleTES's own evaluator (needs g++,
+OpenMP and `libeigen3-dev`):
+
+```bash
+git clone --depth 1 https://github.com/wq-will/SimpleTES ../SimpleTES
+python scripts/verify_lasso.py --simpletes ../SimpleTES --repeats 2
+python scripts/verify_lasso.py --simpletes ../SimpleTES --downstream --gisette
+```
+
+Run the loop on a paper task with real coding agents. This spends real API
+budget: about 110 discovery calls per round at the paper's 3.1-Pro setting.
+
+```bash
+python scripts/run_dream_rsi.py --simpletes ../SimpleTES --task lasso_path \
+    --workdir runs/lasso --discovery-agent gemini --policy-agent gemini
+```
+
+Replay-score any policy file over an existing trace pool:
+
+```bash
+python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tmp/sweep
+```
+
+## Layout
+
+```
+tools/extract_listings.py   PDF -> generated/ (glyph-coordinate recovery)
+see/policy/api.py           Observation, CellMeta, SimResult, GridPlan, LLMDesignedMethod, ...
+see/policy/observation_signal.py   success semantics, failure taxonomy, helper signals
+see/world.py                Trace (frozen tree) and the question API; ReplayQuestion
+see/objective.py            Eq. (1), attainment, Pareto AUC, beta sweep
+see/policies/               parallel_refine.py (pi_1), portfolio.py (example adaptive policy)
+see/live.py                 LiveQuestion: agent + evaluator per probe, attempt_* workspaces
+see/loop.py                 DreamRSI outer loop
+see/pool.py, loader.py      trace pool and policy-file loading
+see/tasks.py                SimpleTES task adapter
+see/toy.py, synthetic.py    toy task, scripted agents, synthetic trees (tests/demo only)
+scripts/                    verify_lasso.py, run_dream_rsi.py
+```
+
+`generated/` is not committed. It holds the paper's own text (© 2026 Google),
+reproduced from the PDF already in this repository.

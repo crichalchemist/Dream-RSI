@@ -24,4 +24,5 @@ SimpleTES/
 Thumbs.db
 .idea/
 .vscode/
+.serena/
 *.swp

@@ -11,7 +11,8 @@ from see.world import Cell, Trace
 def test_eq1_matches_the_paper_formula():
     # V = max s - b1 * N + b2 * N / max(1, k)
     assert eq1_value(2.0, 1.0, probes=12, rounds=3, beta1=0.01, beta2=0.05) == pytest.approx(
-        2.0 - 0.12 + 0.05 * 4)
+        2.0 - 0.12 + 0.05 * 4
+    )
     assert eq1_value(None, 1.0, probes=0, rounds=0, beta1=0.5, beta2=0.5) == 1.0  # root only
 
 
@@ -66,9 +67,10 @@ def test_crashing_or_illegal_policy_is_scored_minus_infinity():
     class Illegal(LLMDesignedMethod):
         NAME = "Illegal"
 
-        def solve(self, question, budget=None):
+        def solve(self, question, budget=None) -> SimResult:
             question.reset()
             question.probe_batch(["b0a5"])
+            raise AssertionError("unreachable: the batch above is illegal and must raise")
 
     report, execs = beta_sweep(Illegal, [synthetic_trace(0)], betas=(0.5,))
     assert not report["valid"] and report["pareto"]["reward"] == float("-inf")
@@ -81,7 +83,7 @@ def test_plan_grid_restricts_replay_and_flags_out_of_support():
             return GridPlan(context.hard_max_branch_count, 1, reason="test")
 
     t = synthetic_trace(0, branches=5, refine=6, max_parallelism=5)
-    report, execs = beta_sweep(Wide, [t], betas=(0.5,))
+    _, execs = beta_sweep(Wide, [t], betas=(0.5,))
     assert all(e["plan"]["refine_count"] == 1 for e in execs)
     assert all(e["probes"] <= 5 * 2 for e in execs)
 

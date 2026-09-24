@@ -6,8 +6,14 @@ refining its current candidate": open every root at once, then refine every
 open branch each round until its attempts run out. Beta is ignored, so its
 beta sweep is degenerate by construction.
 """
+
 from see.policy.api import (
-    GridPlan, LLMDesignedMethod, SimResult, _budget_done, _record_curve, finalize_result,
+    GridPlan,
+    LLMDesignedMethod,
+    SimResult,
+    _budget_done,
+    _record_curve,
+    finalize_result,
 )
 
 NAME = "ParallelRefine"
@@ -29,5 +35,8 @@ class ParallelRefine(LLMDesignedMethod):
         return finalize_result(question, res)
 
     def plan_grid(self, context):
-        return GridPlan(context.fallback_branch_count, context.fallback_refine_count,
-                        reason="fixed parallel-refine grid (the runner's configured default)")
+        return GridPlan(
+            context.fallback_branch_count,
+            context.fallback_refine_count,
+            reason="fixed parallel-refine grid (the runner's configured default)",
+        )

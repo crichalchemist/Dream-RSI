@@ -8,6 +8,7 @@ and ``error.txt``). Everything the paper leaves open about the orchestration
 layer (process isolation, how workspaces are snapshotted, what the direction
 provider says) is a reconstruction choice noted in GAPS.md.
 """
+
 from __future__ import annotations
 
 import collections
@@ -19,7 +20,7 @@ import shutil
 import subprocess
 import threading
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from see.policy.api import CellMeta
 from see.policy.observation_signal import classify_failure
@@ -40,17 +41,17 @@ class TaskSpec:
     ``combined_score`` and optionally ``error``, ``validity``, ``n_valid``, ``n_total``."""
 
     name: str
-    baseline_dir: str                  # seed workspace: the program and anything it needs
-    eval_program: str                  # file the agent edits, e.g. "initial_program.py"
-    problem_file: str                  # task statement shown to the agent
+    baseline_dir: str  # seed workspace: the program and anything it needs
+    eval_program: str  # file the agent edits, e.g. "initial_program.py"
+    problem_file: str  # task statement shown to the agent
     evaluate: Callable[[str], dict]
-    higher_is_better: bool = True      # Sec. 3 wants larger = better; flip e.g. autocorrelation
+    higher_is_better: bool = True  # Sec. 3 wants larger = better; flip e.g. autocorrelation
 
 
 class CommandAgent:
     """Run a coding-agent CLI; ``{prompt}`` in the argv template is replaced."""
 
-    def __init__(self, argv, timeout: float = 3600.0, env: Optional[dict] = None):
+    def __init__(self, argv, timeout: float = 3600.0, env: dict | None = None):
         self.argv = list(AGENT_PRESETS.get(argv, argv) if isinstance(argv, str) else argv)
         self.timeout = timeout
         self.env = env
@@ -58,11 +59,25 @@ class CommandAgent:
     def __call__(self, prompt: str, *, cwd: str, target: str) -> dict:
         argv = [prompt if a == "{prompt}" else a for a in self.argv]
         try:
-            p = subprocess.run(argv, cwd=cwd, capture_output=True, text=True,
-                               timeout=self.timeout, env={**os.environ, **(self.env or {})})
-            return {"returncode": p.returncode, "stdout": p.stdout[-4000:], "stderr": p.stderr[-4000:]}
+            p = subprocess.run(
+                argv,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                env={**os.environ, **(self.env or {})},
+            )
+            return {
+                "returncode": p.returncode,
+                "stdout": p.stdout[-4000:],
+                "stderr": p.stderr[-4000:],
+            }
         except subprocess.TimeoutExpired:
-            return {"returncode": None, "stdout": "", "stderr": f"agent timed out after {self.timeout}s"}
+            return {
+                "returncode": None,
+                "stdout": "",
+                "stderr": f"agent timed out after {self.timeout}s",
+            }
 
 
 def oriented_score(task: TaskSpec, result: dict) -> float:
@@ -81,11 +96,20 @@ class LiveQuestion(Question):
     ``$direction_guidance`` for every attempt on that branch.
     """
 
-    def __init__(self, task: TaskSpec, agent: Callable, tree_dir: str, history_dir: str,
-                 baseline_score: float, max_parallelism: int, branch_count: int,
-                 refine_count: int, max_rounds: Optional[int] = None,
-                 directions: Optional[Callable[[int], str]] = None,
-                 serialize_eval: bool = True):
+    def __init__(
+        self,
+        task: TaskSpec,
+        agent: Callable,
+        tree_dir: str,
+        history_dir: str,
+        baseline_score: float,
+        max_parallelism: int,
+        branch_count: int,
+        refine_count: int,
+        max_rounds: int | None = None,
+        directions: Callable[[int], str] | None = None,
+        serialize_eval: bool = True,
+    ):
         self.task, self.agent = task, agent
         self.tree_dir, self.history_dir = tree_dir, history_dir
         self._direction_of = directions or (lambda branch: "")
@@ -93,8 +117,14 @@ class LiveQuestion(Question):
         self._eval_lock = threading.Lock() if serialize_eval else None
         self.cells = {}
         self._next_seq = 0
-        super().__init__(baseline_score, max_parallelism, branch_count, refine_count, max_rounds,
-                         record_episode=True)
+        super().__init__(
+            baseline_score,
+            max_parallelism,
+            branch_count,
+            refine_count,
+            max_rounds,
+            record_episode=True,
+        )
 
     def reset(self) -> None:
         if getattr(self, "cells", None):
@@ -106,14 +136,19 @@ class LiveQuestion(Question):
             self._directions[branch] = self._direction_of(branch)
         return self._directions[branch]
 
-    def _cell(self, branch: int, attempt: int) -> Optional[CellMeta]:
+    def _cell(self, branch: int, attempt: int) -> CellMeta | None:
         if not self._in_grid(branch, attempt):
             return None
         done = self.cells.get(cell_id(branch, attempt))
         seq = done.seq if done else self._next_seq + branch  # provisional until executed
-        return CellMeta(cell_id(branch, attempt), branch, attempt,
-                        None if attempt == 0 else cell_id(branch, attempt - 1), seq,
-                        {"direction": self._direction(branch)} if attempt == 0 else {})
+        return CellMeta(
+            cell_id(branch, attempt),
+            branch,
+            attempt,
+            None if attempt == 0 else cell_id(branch, attempt - 1),
+            seq,
+            {"direction": self._direction(branch)} if attempt == 0 else {},
+        )
 
     def _execute(self, metas: list) -> list:
         jobs = []
@@ -141,10 +176,17 @@ class LiveQuestion(Question):
         t = self.task
         node = os.path.join(self.tree_dir, node_dirname(meta.branch, meta.attempt))
         os.makedirs(node, exist_ok=True)
-        shutil.copy(self._resume_from(meta.branch, meta.attempt), os.path.join(node, t.eval_program))
-        prompt = exploration_prompt(node_dir=node, history_dir=self.history_dir,
-                                    baseline_dir=t.baseline_dir, eval_program=t.eval_program,
-                                    problem_file=t.problem_file, direction_guidance=direction)
+        shutil.copy(
+            self._resume_from(meta.branch, meta.attempt), os.path.join(node, t.eval_program)
+        )
+        prompt = exploration_prompt(
+            node_dir=node,
+            history_dir=self.history_dir,
+            baseline_dir=t.baseline_dir,
+            eval_program=t.eval_program,
+            problem_file=t.problem_file,
+            direction_guidance=direction,
+        )
         started = time.time()
         program = os.path.join(node, t.eval_program)
         try:
@@ -154,8 +196,11 @@ class LiveQuestion(Question):
             if os.path.exists(program):
                 os.remove(program)
         if not os.path.exists(program):
-            result = {"combined_score": 0.0, "no_program": True,
-                      "error": f"agent left no program ({(run or {}).get('stderr', '')[:200]})"}
+            result = {
+                "combined_score": 0.0,
+                "no_program": True,
+                "error": f"agent left no program ({(run or {}).get('stderr', '')[:200]})",
+            }
         else:
             result = self._evaluate(program)
         error = result.get("error")
@@ -163,17 +208,33 @@ class LiveQuestion(Question):
         score = oriented_score(t, result)
         os.makedirs(os.path.join(node, "eval"), exist_ok=True)
         with open(os.path.join(node, "eval", "score.json"), "w") as f:
-            json.dump({**result, "fail_class": fail_class, "seconds": time.time() - started,
-                       "agent_returncode": run.get("returncode") if run else None}, f,
-                      indent=1, default=str)
+            json.dump(
+                {
+                    **result,
+                    "fail_class": fail_class,
+                    "seconds": time.time() - started,
+                    "agent_returncode": run.get("returncode") if run else None,
+                },
+                f,
+                indent=1,
+                default=str,
+            )
         if error:
             with open(os.path.join(node, "error.txt"), "w") as f:
                 f.write(str(error))
-        return Cell(meta.branch, meta.attempt, seq, score,
-                    evaluated=not result.get("no_program") and not result.get("evaluator_crashed"),
-                    valid=bool(result.get("validity", error is None)), fail_class=fail_class,
-                    error=error, n_valid=result.get("n_valid"), n_total=result.get("n_total"),
-                    tags=dict(meta.tags))
+        return Cell(
+            meta.branch,
+            meta.attempt,
+            seq,
+            score,
+            evaluated=not result.get("no_program") and not result.get("evaluator_crashed"),
+            valid=bool(result.get("validity", error is None)),
+            fail_class=fail_class,
+            error=error,
+            n_valid=result.get("n_valid"),
+            n_total=result.get("n_total"),
+            tags=dict(meta.tags),
+        )
 
     def _evaluate(self, program: str) -> dict:
         lock = self._eval_lock or _NullLock()
@@ -181,22 +242,34 @@ class LiveQuestion(Question):
             try:
                 return dict(self.task.evaluate(program))
             except Exception as e:
-                return {"combined_score": 0.0, "error": f"{type(e).__name__}: {e}",
-                        "evaluator_crashed": True}
+                return {
+                    "combined_score": 0.0,
+                    "error": f"{type(e).__name__}: {e}",
+                    "evaluator_crashed": True,
+                }
 
     def frozen(self, trace_id: str, info: dict) -> Trace:
-        return Trace(self.cells.values(), self.baseline_score, self.max_parallelism,
-                     trace_id=trace_id, grid=(self.branch_count, self.refine_count), info=info)
+        return Trace(
+            self.cells.values(),
+            self.baseline_score,
+            self.max_parallelism,
+            trace_id=trace_id,
+            grid=(self.branch_count, self.refine_count),
+            info=info,
+        )
 
     def manifest_stats(self) -> dict:
         ok = [c for c in self.cells.values() if c.success and c.score is not None]
         best = max(ok, key=lambda c: c.score, default=None)
         depth = collections.Counter(c.branch for c in self.cells.values())
         return {
-            "probes": len(self.cells), "decision_rounds": self.decision_rounds,
+            "probes": len(self.cells),
+            "decision_rounds": self.decision_rounds,
             "effective_sequential_rounds": self.effective_sequential_rounds,
-            "opened_width": len(depth), "max_depth": max(depth.values(), default=0),
-            "best_score": best.score if best else None, "best_cell": best.id if best else None,
+            "opened_width": len(depth),
+            "max_depth": max(depth.values(), default=0),
+            "best_score": best.score if best else None,
+            "best_cell": best.id if best else None,
             "best_attempt": best.attempt if best else None,
             "baseline_score": self.baseline_score,
             "fail_classes": dict(collections.Counter(c.fail_class for c in self.cells.values())),

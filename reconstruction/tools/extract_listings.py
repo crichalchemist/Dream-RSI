@@ -22,8 +22,10 @@ Listing 2 (U+00D7 in "branch x attempt", U+2192 in "parent -> child") are kept.
 
 Usage: python tools/extract_listings.py [--pdf PATH] [--out DIR]
 """
+
 import argparse
 import collections
+import hashlib
 import json
 import os
 import sys
@@ -37,11 +39,40 @@ X0, CW = 76.34, 4.6575  # x origin of code column 0 and monospace advance (pt)
 NUM_FONT, NUM_SIZE, CODE_FONT = "XCharter-Roman", 5.98, "LMMono8-Regular"
 FIRST_LISTING_PAGE = 17  # 0-based; Appendix B starts on page 18
 NO_SPACE_BEFORE = tuple("‘’?,.;:)]")
-GLYPHS = {"‘": "`", "’": "'", "“": '"', "”": '"',
-          "–": "--", "−": "-", "˜": "~", "∼": "~"}
-OUTPUTS = ["exploration_prompt.md", "policy_improvement_prompt.md",
-           "lasso_path_dream_rsi.py"]
+GLYPHS = {"‘": "`", "’": "'", "“": '"', "”": '"', "–": "--", "−": "-", "˜": "~", "∼": "~"}
+# Listing order in the PDF. tools/generated.sha256 and tests/test_extract_manifest.py
+# depend on this order; do not reorder.
+OUTPUTS = ["exploration_prompt.md", "policy_improvement_prompt.md", "lasso_path_dream_rsi.py"]
 EXPECTED_LINES = [28, 273, 847]
+MANIFEST = os.path.join(HERE, "generated.sha256")  # sha256sum format: "<hex>  <name>"
+
+
+def digests(texts):
+    return {
+        name: hashlib.sha256(text.encode()).hexdigest()
+        for name, text in zip(OUTPUTS, texts, strict=True)
+    }
+
+
+def read_manifest(path=MANIFEST):
+    out = {}
+    with open(path) as f:
+        for line in f:
+            hexdigest, _, name = line.strip().partition("  ")
+            out[name] = hexdigest
+    return out
+
+
+def write_manifest(texts, path=MANIFEST):
+    with open(path, "w") as f:
+        for name, hexdigest in digests(texts).items():
+            f.write(f"{hexdigest}  {name}\n")
+
+
+def check_manifest(texts, path=MANIFEST):
+    """Names whose regenerated text differs from the manifest; empty means no drift."""
+    want = read_manifest(path)
+    return [name for name, hexdigest in digests(texts).items() if want.get(name) != hexdigest]
 
 
 def _rows(page):
@@ -79,8 +110,11 @@ def extract(pdf_path):
     listings, current, last = [], None, None
     for page_index in range(FIRST_LISTING_PAGE, doc.page_count):
         for row in _rows(doc[page_index]):
-            nums = [s for s in row if s["font"] == NUM_FONT
-                    and round(s["size"], 2) == NUM_SIZE and s["origin"][0] < X0]
+            nums = [
+                s
+                for s in row
+                if s["font"] == NUM_FONT and round(s["size"], 2) == NUM_SIZE and s["origin"][0] < X0
+            ]
             code = []
             if any(s["font"] == CODE_FONT for s in row):
                 # keep symbol-font glyphs (x, ->) set inline in the listing
@@ -90,6 +124,8 @@ def extract(pdf_path):
                 if number == 1:
                     current = {}
                     listings.append(current)
+                if current is None:
+                    raise ValueError(f"code row before line 1 (page {page_index + 1})")
                 if number in current:
                     raise ValueError(f"line {number} seen twice (page {page_index + 1})")
                 current[number] = _render(code)
@@ -112,21 +148,49 @@ def extract(pdf_path):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
     ap.add_argument("--pdf", default=DEFAULT_PDF)
     ap.add_argument("--out", default=DEFAULT_OUT)
+    ap.add_argument("--manifest", default=MANIFEST)
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="compare the extraction with the manifest, write nothing, exit 1 on drift",
+    )
+    mode.add_argument(
+        "--write-manifest",
+        action="store_true",
+        help="also rewrite the manifest (only when the paper PDF is deliberately updated)",
+    )
     args = ap.parse_args(argv)
     texts = extract(args.pdf)
     if [t.count("\n") for t in texts] != EXPECTED_LINES:
-        sys.exit(f"unexpected listing sizes {[t.count(chr(10)) for t in texts]}; "
-                 f"expected {EXPECTED_LINES} (different PDF build?)")
+        sys.exit(
+            f"unexpected listing sizes {[t.count(chr(10)) for t in texts]}; "
+            f"expected {EXPECTED_LINES} (different PDF build?)"
+        )
+    if args.check:
+        drift = check_manifest(texts, args.manifest)
+        print(json.dumps({"manifest": args.manifest, "drift": drift}))
+        sys.exit(1 if drift else 0)
     os.makedirs(args.out, exist_ok=True)
-    for name, text in zip(OUTPUTS, texts):
+    for name, text in zip(OUTPUTS, texts, strict=True):
         with open(os.path.join(args.out, name), "w") as f:
             f.write(text)
+    if args.write_manifest:
+        write_manifest(texts, args.manifest)
     non_ascii = sorted({c for t in texts for c in t if ord(c) > 126})
-    print(json.dumps({"out": args.out, "files": OUTPUTS,
-                      "lines": EXPECTED_LINES, "non_ascii_left": non_ascii}))
+    print(
+        json.dumps(
+            {
+                "out": args.out,
+                "files": OUTPUTS,
+                "lines": EXPECTED_LINES,
+                "non_ascii_left": non_ascii,
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

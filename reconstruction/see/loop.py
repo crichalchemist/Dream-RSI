@@ -17,6 +17,7 @@ Layout under ``workdir`` (names quoted in Listing 2 are kept):
     policy_dev/history/rNNNN_*/       method.py + proposal_results/
     state.json                        deployed policy, round counter, log
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -27,12 +28,12 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
+from see.live import LiveQuestion, TaskSpec, oriented_score
 from see.loader import load_policy
 from see.objective import DEFAULT_BETAS, DEFAULT_LAMBDA, score_of, validate_plan
 from see.policy.api import GridPlanningContext
-from see.live import LiveQuestion, TaskSpec, oriented_score
 from see.prompts import policy_improvement_prompt
 
 PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -42,26 +43,32 @@ BASELINE_POLICY = os.path.join(PKG_ROOT, "see", "policies", "parallel_refine.py"
 @dataclasses.dataclass
 class LoopConfig:
     workdir: str
-    iterations: int = 5                    # outer rounds (5 for Lasso, 10 for math in the paper)
-    versions: int = 4                      # M, policy versions per offline phase (unstated)
-    max_parallelism: int = 10              # W workers (10 for Gemini-3.1-Pro runs, 32 for Flash)
-    fallback_grid: tuple = (10, 10)        # runner default: 10 branches x 11 attempts = 110 calls
-    hard_max_grid: tuple = (32, 30)        # caps plan_grid may request (unstated)
-    max_live_rounds: Optional[int] = None  # K1 (unstated)
-    max_replay_rounds: Optional[int] = None  # K2 (unstated)
+    iterations: int = 5  # outer rounds (5 for Lasso, 10 for math in the paper)
+    versions: int = 4  # M, policy versions per offline phase (unstated)
+    max_parallelism: int = 10  # W workers (10 for Gemini-3.1-Pro runs, 32 for Flash)
+    fallback_grid: tuple = (10, 10)  # runner default: 10 branches x 11 attempts = 110 calls
+    hard_max_grid: tuple = (32, 30)  # caps plan_grid may request (unstated)
+    max_live_rounds: int | None = None  # K1 (unstated)
+    max_replay_rounds: int | None = None  # K2 (unstated)
     betas: tuple = DEFAULT_BETAS
     lam: float = DEFAULT_LAMBDA
-    beta1: float = 0.0                     # Eq. (1) coefficients (unstated)
+    beta1: float = 0.0  # Eq. (1) coefficients (unstated)
     beta2: float = 0.0
-    objective: str = "pareto"              # "pareto" (Listing 2) or "eq1" (Sec. 3)
+    objective: str = "pareto"  # "pareto" (Listing 2) or "eq1" (Sec. 3)
     sweep_timeout: float = 1800.0
     initial_policy: str = BASELINE_POLICY  # pi_1: the paper starts from parallel refine
     serialize_eval: bool = True
 
 
 class DreamRSI:
-    def __init__(self, config: LoopConfig, task: TaskSpec, discovery_agent: Callable,
-                 policy_agent: Callable, directions: Optional[Callable[[int], str]] = None):
+    def __init__(
+        self,
+        config: LoopConfig,
+        task: TaskSpec,
+        discovery_agent: Callable,
+        policy_agent: Callable,
+        directions: Callable[[int], str] | None = None,
+    ):
         self.c, self.task = config, task
         self.discovery_agent, self.policy_agent = discovery_agent, policy_agent
         self.directions = directions
@@ -101,15 +108,16 @@ class DreamRSI:
     def baseline_score(self) -> float:
         path = os.path.join(self.w, "baseline_eval.json")
         if not os.path.exists(path):
-            result = dict(self.task.evaluate(os.path.join(self.task.baseline_dir,
-                                                          self.task.eval_program)))
+            result = dict(
+                self.task.evaluate(os.path.join(self.task.baseline_dir, self.task.eval_program))
+            )
             with open(path, "w") as f:
                 json.dump(result, f, indent=1, default=str)
         with open(path) as f:
             return oriented_score(self.task, json.load(f))
 
     # -- the loop -----------------------------------------------------------------
-    def run(self, iterations: Optional[int] = None):
+    def run(self, iterations: int | None = None):
         for _ in range(iterations or self.c.iterations):
             t = self.state["iteration"] + 1
             self.online(t)
@@ -135,22 +143,35 @@ class DreamRSI:
             link = os.path.join(history, f"iter{prev:04d}")
             if not os.path.lexists(link):
                 os.symlink(os.path.join(self.w, "runs", f"iter{prev:04d}", "tree"), link)
-        q = LiveQuestion(self.task, self.discovery_agent, tree, history, self.baseline_score(),
-                         self.c.max_parallelism, grid[0], grid[1], self.c.max_live_rounds,
-                         self.directions, self.c.serialize_eval)
+        q = LiveQuestion(
+            self.task,
+            self.discovery_agent,
+            tree,
+            history,
+            self.baseline_score(),
+            self.c.max_parallelism,
+            grid[0],
+            grid[1],
+            self.c.max_live_rounds,
+            self.directions,
+            self.c.serialize_eval,
+        )
         started, error = time.time(), None
         try:
             policy.solve(q, budget=None)
         except Exception as e:  # keep what was collected
             error = f"{type(e).__name__}: {e}"
         manifest = {
-            "iteration": t, "policy_round": self.state.get("deployed_round", "initial"),
+            "iteration": t,
+            "policy_round": self.state.get("deployed_round", "initial"),
             "beta": getattr(policy, "beta", None),
             "planned_grid": dataclasses.asdict(plan) if plan else None,
             "used_fallback": plan is None,
             "effective_grid": {"branch_count": grid[0], "refine_count": grid[1]},
-            **q.manifest_stats(), "error": error,
-            "started": started, "finished": time.time(),
+            **q.manifest_stats(),
+            "error": error,
+            "started": started,
+            "finished": time.time(),
         }
         os.makedirs(out)
         q.frozen(f"iter{t:04d}", {"iteration": t}).save(os.path.join(out, "trace.json"))
@@ -176,16 +197,18 @@ class DreamRSI:
         candidates = [self._archive(self.state["deployed"], t, 0)]
         for m in range(1, self.c.versions):
             shutil.copy(candidates[-1]["method"], method_file)  # revise the latest version
-            prompt = policy_improvement_prompt(method_file=method_file,
-                                               history_dir=self.dev_history, trace_pool=self.pool)
+            prompt = policy_improvement_prompt(
+                method_file=method_file, history_dir=self.dev_history, trace_pool=self.pool
+            )
             run = self.policy_agent(prompt, cwd=self.dev, target=method_file)
             candidates.append(self._archive(method_file, t, m, agent_run=run))
         best = max(candidates, key=lambda c: (c["score"], -c["m"]))  # ties keep the earlier one
         deployed = os.path.join(self.w, "deployed", f"iter{t + 1:04d}.py")
         shutil.copy(best["method"], deployed)
         self.state["deployed"], self.state["deployed_round"] = deployed, best["round"]
-        self.state["log"][-1]["offline"] = [{k: c[k] for k in ("round", "m", "score", "valid")}
-                                            for c in candidates]
+        self.state["log"][-1]["offline"] = [
+            {k: c[k] for k in ("round", "m", "score", "valid")} for c in candidates
+        ]
         self.state["log"][-1]["selected"] = best["round"]
         self._save_state()
         return deployed
@@ -201,31 +224,63 @@ class DreamRSI:
             with open(os.path.join(rdir, "dev_agent.json"), "w") as f:
                 json.dump(agent_run, f, indent=1, default=str)
         report = self._sweep(archived, rdir)
-        return {"round": name, "m": m, "method": archived, "valid": report.get("valid", False),
-                "score": score_of(report, self.c.objective) if report.get("valid") else float("-inf")}
+        return {
+            "round": name,
+            "m": m,
+            "method": archived,
+            "valid": report.get("valid", False),
+            "score": score_of(report, self.c.objective) if report.get("valid") else float("-inf"),
+        }
 
     def _sweep(self, method: str, rdir: str) -> dict:
         """Replay-evaluate one version in a subprocess (it is LLM-written code)."""
         out = os.path.join(rdir, "proposal_results")
         os.makedirs(out, exist_ok=True)
         (fb, fr), (hb, hr) = self.c.fallback_grid, self.c.hard_max_grid
-        cmd = [sys.executable, "-m", "see", "sweep", "--method", method, "--pool", self.pool,
-               "--out", out, "--lam", str(self.c.lam), "--beta1", str(self.c.beta1),
-               "--beta2", str(self.c.beta2), "--fallback", str(fb), str(fr),
-               "--hard-max", str(hb), str(hr), "--betas", *map(str, self.c.betas)]
+        cmd = [
+            sys.executable,
+            "-m",
+            "see",
+            "sweep",
+            "--method",
+            method,
+            "--pool",
+            self.pool,
+            "--out",
+            out,
+            "--lam",
+            str(self.c.lam),
+            "--beta1",
+            str(self.c.beta1),
+            "--beta2",
+            str(self.c.beta2),
+            "--fallback",
+            str(fb),
+            str(fr),
+            "--hard-max",
+            str(hb),
+            str(hr),
+            "--betas",
+            *map(str, self.c.betas),
+        ]
         if self.c.max_replay_rounds is not None:
             cmd += ["--max-rounds", str(self.c.max_replay_rounds)]
         report_path = os.path.join(out, "beta_sweep.json")
         try:
-            p = subprocess.run(cmd, cwd=PKG_ROOT, capture_output=True, text=True,
-                               timeout=self.c.sweep_timeout)
+            p = subprocess.run(
+                cmd, cwd=PKG_ROOT, capture_output=True, text=True, timeout=self.c.sweep_timeout
+            )
             if p.returncode != 0 or not os.path.exists(report_path):
                 raise RuntimeError(p.stderr[-2000:] or f"exit {p.returncode}")
             with open(report_path) as f:
                 return json.load(f)
         except Exception as e:
-            report = {"valid": False, "errors": [f"{type(e).__name__}: {e}"],
-                      "pareto": {"reward": float("-inf")}, "eq1": {"V": float("-inf")}}
+            report = {
+                "valid": False,
+                "errors": [f"{type(e).__name__}: {e}"],
+                "pareto": {"reward": float("-inf")},
+                "eq1": {"V": float("-inf")},
+            }
             with open(report_path, "w") as f:
                 json.dump(report, f, indent=1)
             return report

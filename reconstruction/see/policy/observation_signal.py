@@ -4,38 +4,59 @@ The paper names only ``"ok"`` and ``"compile_other"`` as fail classes; the
 rest of the taxonomy is inferred from the failure kinds Listing 2 lists as
 "normally repairable" (lines 65-67) versus environment/dependency failures.
 """
+
 from __future__ import annotations
 
 import re
 
 OK = "ok"
-REPAIRABLE_FAIL_CLASSES = frozenset({
-    "correctness",    # output/correctness mismatch
-    "resource",       # shared-memory / resource limits, OOM
-    "code",           # variable/code errors
-    "shape",          # mask/layout/shape errors
-    "compile_other",  # "compile_other alone is not permanently hard"
-    "timeout",
-    "no_program",     # agent wrote nothing evaluable
-})
+REPAIRABLE_FAIL_CLASSES = frozenset(
+    {
+        "correctness",  # output/correctness mismatch
+        "resource",  # shared-memory / resource limits, OOM
+        "code",  # variable/code errors
+        "shape",  # mask/layout/shape errors
+        "compile_other",  # "compile_other alone is not permanently hard"
+        "timeout",
+        "no_program",  # agent wrote nothing evaluable
+    }
+)
 HARD_FAIL_CLASSES = frozenset({"env"})  # environment/dependency failure
 FAIL_CLASSES = frozenset({OK}) | REPAIRABLE_FAIL_CLASSES | HARD_FAIL_CLASSES
 
 # First match wins; order matters (a compile error can mention a missing header).
 _RULES = [
-    ("env", r"No module named|ModuleNotFoundError|command not found|CUDA driver|"
-            r"no CUDA-capable|cannot open shared object|Permission denied"),
+    (
+        "env",
+        r"No module named|ModuleNotFoundError|command not found|CUDA driver|"
+        r"no CUDA-capable|cannot open shared object|Permission denied",
+    ),
     ("timeout", r"[Tt]imed? ?out|TimeoutExpired|deadline exceeded"),
-    ("resource", r"[Mm]emory|shared mem|out of resources|OOM|too many resources|"
-                 r"exceeds .*limit|Killed"),
-    ("compile_other", r"[Cc]ompil(e|ation) (failed|error)|error: |undefined reference|"
-                      r"ld returned"),
-    ("shape", r"[Ss]hape mismatch|size mismatch|[Oo]utput size|layout|mask|"
-              r"dimension|broadcast"),
-    ("correctness", r"[Cc]orrectness|mismatch|max_gap|not close|allclose|"
-                    r"[Ww]rong (answer|result)|[Ii]ncorrect|[Vv]alidation failed"),
-    ("code", r"NameError|AttributeError|TypeError|ValueError|IndexError|KeyError|"
-             r"SyntaxError|ZeroDivisionError|Traceback|[Ee]xception"),
+    (
+        "resource",
+        r"[Mm]emory|shared mem|out of resources|OOM|too many resources|"
+        r"exceeds .*limit|Killed",
+    ),
+    (
+        "compile_other",
+        r"[Cc]ompil(e|ation) (failed|error)|error: |undefined reference|"
+        r"ld returned",
+    ),
+    (
+        "shape",
+        r"[Ss]hape mismatch|size mismatch|[Oo]utput size|layout|mask|"
+        r"dimension|broadcast",
+    ),
+    (
+        "correctness",
+        r"[Cc]orrectness|mismatch|max_gap|not close|allclose|"
+        r"[Ww]rong (answer|result)|[Ii]ncorrect|[Vv]alidation failed",
+    ),
+    (
+        "code",
+        r"NameError|AttributeError|TypeError|ValueError|IndexError|KeyError|"
+        r"SyntaxError|ZeroDivisionError|Traceback|[Ee]xception",
+    ),
 ]
 
 

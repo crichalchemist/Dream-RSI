@@ -12,12 +12,13 @@ branch. That cannot express the paper's own baseline, which opens W
 workspaces in its first round. Listing 2's API exposes each unopened branch
 root as its own legal cell, which is what is implemented here.
 """
+
 from __future__ import annotations
 
 import dataclasses
 import json
 import math
-from typing import Callable, Iterable, Optional
+from collections.abc import Callable, Iterable
 
 from see.policy.api import CellMeta, Observation
 from see.policy.observation_signal import OK
@@ -38,13 +39,13 @@ class Cell:
     branch: int
     attempt: int
     seq: int
-    score: Optional[float]
+    score: float | None
     evaluated: bool = True
     valid: bool = True
     fail_class: str = OK
-    error: Optional[str] = None
-    n_valid: Optional[int] = None
-    n_total: Optional[int] = None
+    error: str | None = None
+    n_valid: int | None = None
+    n_total: int | None = None
     tags: dict = dataclasses.field(default_factory=dict)
 
     @property
@@ -52,7 +53,7 @@ class Cell:
         return cell_id(self.branch, self.attempt)
 
     @property
-    def parent_id(self) -> Optional[str]:
+    def parent_id(self) -> str | None:
         return None if self.attempt == 0 else cell_id(self.branch, self.attempt - 1)
 
     @property
@@ -63,8 +64,15 @@ class Cell:
 class Trace:
     """One completed discovery tree T_i, frozen for replay."""
 
-    def __init__(self, cells: Iterable[Cell], baseline_score: float, max_parallelism: int,
-                 trace_id: str = "", grid: Optional[tuple] = None, info: Optional[dict] = None):
+    def __init__(
+        self,
+        cells: Iterable[Cell],
+        baseline_score: float,
+        max_parallelism: int,
+        trace_id: str = "",
+        grid: tuple | None = None,
+        info: dict | None = None,
+    ):
         self.cells = {c.id: c for c in cells}
         self.baseline_score = float(baseline_score)
         self.max_parallelism = int(max_parallelism)
@@ -87,7 +95,7 @@ class Trace:
     def __len__(self) -> int:
         return len(self.cells)
 
-    def cell(self, branch: int, attempt: int) -> Optional[Cell]:
+    def cell(self, branch: int, attempt: int) -> Cell | None:
         return self.cells.get(cell_id(branch, attempt))
 
     def ceiling(self) -> float:
@@ -103,28 +111,36 @@ class Trace:
             "max_parallelism": self.max_parallelism,
             "grid": {"branch_count": self.grid[0], "refine_count": self.grid[1]},
             "info": self.info,
-            "cells": [dataclasses.asdict(c) for c in sorted(self.cells.values(), key=lambda c: c.seq)],
+            "cells": [
+                dataclasses.asdict(c) for c in sorted(self.cells.values(), key=lambda c: c.seq)
+            ],
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Trace":
+    def from_dict(cls, d: dict) -> Trace:
         if d.get("format") != TRACE_FORMAT:
             raise ValueError(f"not a {TRACE_FORMAT} document")
         g = d["grid"]
-        return cls((Cell(**c) for c in d["cells"]), d["baseline_score"], d["max_parallelism"],
-                   d.get("trace_id", ""), (g["branch_count"], g["refine_count"]), d.get("info"))
+        return cls(
+            (Cell(**c) for c in d["cells"]),
+            d["baseline_score"],
+            d["max_parallelism"],
+            d.get("trace_id", ""),
+            (g["branch_count"], g["refine_count"]),
+            d.get("info"),
+        )
 
     def save(self, path: str) -> None:
         with open(path, "w") as f:
             json.dump(self.to_dict(), f, indent=1)
 
     @classmethod
-    def load(cls, path: str) -> "Trace":
+    def load(cls, path: str) -> Trace:
         with open(path) as f:
             return cls.from_dict(json.load(f))
 
 
-def observation_for(cell: Cell, parent: Optional[Cell], baseline: float) -> Observation:
+def observation_for(cell: Cell, parent: Cell | None, baseline: float) -> Observation:
     delta_base = delta_parent = None
     if cell.success and cell.score is not None:
         delta_base = cell.score - baseline
@@ -132,8 +148,20 @@ def observation_for(cell: Cell, parent: Optional[Cell], baseline: float) -> Obse
             delta_parent = delta_base  # attempt 0's parent is the root (baseline) workspace
         elif parent.success and parent.score is not None:
             delta_parent = cell.score - parent.score
-    return Observation(cell.id, cell.branch, cell.attempt, cell.score, cell.evaluated, cell.valid,
-                       cell.fail_class, cell.error, delta_base, delta_parent, cell.n_valid, cell.n_total)
+    return Observation(
+        cell.id,
+        cell.branch,
+        cell.attempt,
+        cell.score,
+        cell.evaluated,
+        cell.valid,
+        cell.fail_class,
+        cell.error,
+        delta_base,
+        delta_parent,
+        cell.n_valid,
+        cell.n_total,
+    )
 
 
 class Question:
@@ -144,8 +172,15 @@ class Question:
     returns their Observations. Legality, batching and bookkeeping live here.
     """
 
-    def __init__(self, baseline_score: float, max_parallelism: int, branch_count: int,
-                 refine_count: int, max_rounds: Optional[int] = None, record_episode: bool = False):
+    def __init__(
+        self,
+        baseline_score: float,
+        max_parallelism: int,
+        branch_count: int,
+        refine_count: int,
+        max_rounds: int | None = None,
+        record_episode: bool = False,
+    ):
         if max_parallelism < 1:
             raise ValueError("max_parallelism must be >= 1")
         self.baseline_score = float(baseline_score)
@@ -157,7 +192,7 @@ class Question:
         self.reset()
 
     # -- subclass hooks -------------------------------------------------------
-    def _cell(self, branch: int, attempt: int) -> Optional[CellMeta]:
+    def _cell(self, branch: int, attempt: int) -> CellMeta | None:
         raise NotImplementedError
 
     def _execute(self, metas: list) -> list:
@@ -214,7 +249,7 @@ class Question:
             return self._meta_by_id(cid)
         raise KeyError(f"{cid} is neither revealed nor legal")
 
-    def probe_batch(self, cells, on_reveal: Optional[Callable] = None) -> list:
+    def probe_batch(self, cells, on_reveal: Callable | None = None) -> list:
         cells = list(cells)
         if not cells:
             raise IllegalBatch("empty batch: stop by not probing")
@@ -238,18 +273,33 @@ class Question:
             self._revealed[obs.cell_id] = obs
             self._seen.add(obs.cell_id)
             self.budget_spent += 1
-            if (obs.evaluated and obs.error is None and obs.fail_class == OK
-                    and obs.score is not None
-                    and (self.best_so_far is None or obs.score > self.best_so_far)):
+            if (
+                obs.evaluated
+                and obs.error is None
+                and obs.fail_class == OK
+                and obs.score is not None
+                and (self.best_so_far is None or obs.score > self.best_so_far)
+            ):
                 self.best_so_far = obs.score
             if on_reveal is not None:
                 on_reveal(obs)
         if self.record_episode:
-            self.episode.append({
-                "round": self.decision_rounds, "prefix": prefix, "batch": cells,
-                "revealed": [{"cell": o.cell_id, "score": o.score, "fail_class": o.fail_class,
-                              "delta_vs_parent": o.delta_vs_parent} for o in observations],
-            })
+            self.episode.append(
+                {
+                    "round": self.decision_rounds,
+                    "prefix": prefix,
+                    "batch": cells,
+                    "revealed": [
+                        {
+                            "cell": o.cell_id,
+                            "score": o.score,
+                            "fail_class": o.fail_class,
+                            "delta_vs_parent": o.delta_vs_parent,
+                        }
+                        for o in observations
+                    ],
+                }
+            )
         return observations
 
     # -- helpers --------------------------------------------------------------
@@ -261,8 +311,12 @@ class Question:
         return m
 
     def _prefix_summary(self) -> dict:
-        return {"opened": len(self._depth), "revealed": len(self._revealed),
-                "best": self.best_so_far, "legal": len(self.legal_actions())}
+        return {
+            "opened": len(self._depth),
+            "revealed": len(self._revealed),
+            "best": self.best_so_far,
+            "legal": len(self.legal_actions()),
+        }
 
 
 class ReplayQuestion(Question):
@@ -272,19 +326,30 @@ class ReplayQuestion(Question):
     (clipped to the trace's support); ``max_rounds`` is the paper's K2.
     """
 
-    def __init__(self, trace: Trace, max_parallelism: Optional[int] = None,
-                 branch_count: Optional[int] = None, refine_count: Optional[int] = None,
-                 max_rounds: Optional[int] = None, record_episode: bool = False):
+    def __init__(
+        self,
+        trace: Trace,
+        max_parallelism: int | None = None,
+        branch_count: int | None = None,
+        refine_count: int | None = None,
+        max_rounds: int | None = None,
+        record_episode: bool = False,
+    ):
         self.trace = trace
         tb, tr = trace.grid
-        self.out_of_support = ((branch_count is not None and branch_count > tb)
-                               or (refine_count is not None and refine_count > tr))
-        super().__init__(trace.baseline_score, max_parallelism or trace.max_parallelism,
-                         tb if branch_count is None else min(branch_count, tb),
-                         tr if refine_count is None else min(refine_count, tr),
-                         max_rounds, record_episode)
+        self.out_of_support = (branch_count is not None and branch_count > tb) or (
+            refine_count is not None and refine_count > tr
+        )
+        super().__init__(
+            trace.baseline_score,
+            max_parallelism or trace.max_parallelism,
+            tb if branch_count is None else min(branch_count, tb),
+            tr if refine_count is None else min(refine_count, tr),
+            max_rounds,
+            record_episode,
+        )
 
-    def _cell(self, branch: int, attempt: int) -> Optional[CellMeta]:
+    def _cell(self, branch: int, attempt: int) -> CellMeta | None:
         c = self.trace.cell(branch, attempt)
         if c is None:
             return None

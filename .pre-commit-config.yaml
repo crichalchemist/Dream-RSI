@@ -1,0 +1,28 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(assets/|papers/)
+      - id: end-of-file-fixer
+        exclude: ^(assets/|papers/)
+      - id: check-yaml
+      - id: check-added-large-files
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^reconstruction/
+      - id: ruff-format
+        files: ^reconstruction/
+  - repo: local
+    hooks:
+      # system hook on purpose: the pyright-python mirror's isolated env cannot resolve numpy/pymupdf.
+      # Expects the venv at reconstruction/.venv (README, CLAUDE.md); --pythonpath pins the interpreter.
+      - id: pyright
+        name: pyright (reconstruction)
+        entry: reconstruction/.venv/bin/pyright --project reconstruction --pythonpath reconstruction/.venv/bin/python
+        language: system
+        pass_filenames: false
+        files: ^reconstruction/(.*\.py|pyproject\.toml)$

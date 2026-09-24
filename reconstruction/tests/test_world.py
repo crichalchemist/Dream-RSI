@@ -2,7 +2,10 @@ import pytest
 
 from see.policy.api import SimResult, _record_curve, finalize_result
 from see.policy.observation_signal import (
-    branch_failed_hard, classify_failure, is_success, probe_improved_vs_parent,
+    branch_failed_hard,
+    classify_failure,
+    is_success,
+    probe_improved_vs_parent,
 )
 from see.synthetic import synthetic_trace
 from see.world import Cell, IllegalBatch, ReplayQuestion, Trace, cell_id
@@ -11,9 +14,12 @@ from see.world import Cell, IllegalBatch, ReplayQuestion, Trace, cell_id
 def small_trace():
     # branch 0: 3 attempts; branch 1: 1 attempt then stopped; branch 2: failure then recovery
     cells = [
-        Cell(0, 0, 0, 1.2), Cell(1, 0, 1, 0.9), Cell(2, 0, 2, 0.0, fail_class="compile_other",
-                                                    error="compilation failed", n_valid=0),
-        Cell(0, 1, 3, 1.5), Cell(2, 1, 4, 1.8), Cell(0, 2, 5, 1.4),
+        Cell(0, 0, 0, 1.2),
+        Cell(1, 0, 1, 0.9),
+        Cell(2, 0, 2, 0.0, fail_class="compile_other", error="compilation failed", n_valid=0),
+        Cell(0, 1, 3, 1.5),
+        Cell(2, 1, 4, 1.8),
+        Cell(0, 2, 5, 1.4),
     ]
     return Trace(cells, baseline_score=1.0, max_parallelism=2, trace_id="t", grid=(3, 2))
 
@@ -123,16 +129,19 @@ def test_zero_valid_compile_failure_is_a_hard_signal_but_repairable_class():
     assert obs.fail_class == "compile_other"
 
 
-@pytest.mark.parametrize("text,expected", [
-    (None, "ok"),
-    ("C++ compilation failed:\nerror: expected ';'", "compile_other"),
-    ("Timed out after 600s", "timeout"),
-    ("CUDA error: too many resources requested for launch", "resource"),
-    ("Output size mismatch: got 8, expected 16", "shape"),
-    ("max_gap 3e-4 exceeds tolerance; correctness check failed", "correctness"),
-    ("ModuleNotFoundError: No module named 'triton'", "env"),
-    ("NameError: name 'x' is not defined", "code"),
-])
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        (None, "ok"),
+        ("C++ compilation failed:\nerror: expected ';'", "compile_other"),
+        ("Timed out after 600s", "timeout"),
+        ("CUDA error: too many resources requested for launch", "resource"),
+        ("Output size mismatch: got 8, expected 16", "shape"),
+        ("max_gap 3e-4 exceeds tolerance; correctness check failed", "correctness"),
+        ("ModuleNotFoundError: No module named 'triton'", "env"),
+        ("NameError: name 'x' is not defined", "code"),
+    ],
+)
 def test_failure_classifier(text, expected):
     assert classify_failure(text) == expected
 

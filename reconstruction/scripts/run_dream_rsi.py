@@ -23,7 +23,7 @@ def agent(spec: str, timeout: float) -> CommandAgent:
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
     ap.add_argument("--simpletes", required=True)
     ap.add_argument("--task", required=True, choices=sorted(SIMPLETES_TASKS))
     ap.add_argument("--workdir", required=True)

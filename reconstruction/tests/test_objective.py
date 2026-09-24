@@ -67,9 +67,10 @@ def test_crashing_or_illegal_policy_is_scored_minus_infinity():
     class Illegal(LLMDesignedMethod):
         NAME = "Illegal"
 
-        def solve(self, question, budget=None):
+        def solve(self, question, budget=None) -> SimResult:
             question.reset()
             question.probe_batch(["b0a5"])
+            raise AssertionError("unreachable: the batch above is illegal and must raise")
 
     report, execs = beta_sweep(Illegal, [synthetic_trace(0)], betas=(0.5,))
     assert not report["valid"] and report["pareto"]["reward"] == float("-inf")

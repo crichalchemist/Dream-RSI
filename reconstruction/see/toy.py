@@ -59,7 +59,10 @@ class ScriptedDiscoveryAgent:
 
     def __call__(self, prompt: str, *, cwd: str, target: str) -> dict:
         node = os.path.basename(target)
-        branch, attempt = map(int, re.match(r"attempt_b(\d+)_a(\d+)", node).groups())
+        m = re.match(r"attempt_b(\d+)_a(\d+)", node)
+        if m is None:
+            raise ValueError(f"not an attempt directory: {node!r}")
+        branch, attempt = map(int, m.groups())
         iteration = os.path.basename(os.path.dirname(os.path.dirname(target)))
         drift = _rng(self.seed, "branch", branch).gauss(0.0, 0.05)  # a direction's quality
         r = _rng(self.seed, iteration, branch, attempt)

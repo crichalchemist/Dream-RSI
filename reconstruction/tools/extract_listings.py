@@ -92,6 +92,8 @@ def extract(pdf_path):
                 if number == 1:
                     current = {}
                     listings.append(current)
+                if current is None:
+                    raise ValueError(f"code row before line 1 (page {page_index + 1})")
                 if number in current:
                     raise ValueError(f"line {number} seen twice (page {page_index + 1})")
                 current[number] = _render(code)
@@ -114,7 +116,7 @@ def extract(pdf_path):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
     ap.add_argument("--pdf", default=DEFAULT_PDF)
     ap.add_argument("--out", default=DEFAULT_OUT)
     args = ap.parse_args(argv)

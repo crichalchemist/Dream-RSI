@@ -24,6 +24,7 @@ import dataclasses
 import statistics
 import traceback
 from collections.abc import Callable, Sequence
+from typing import Any
 
 from see.policy.api import GridPlan, GridPlanningContext
 from see.world import ReplayQuestion, Trace
@@ -183,7 +184,9 @@ def beta_sweep(
     proposal_results/beta_sweep.json; ``executions`` holds one replay episode
     per (frozen trace, beta), for policy_execution_traces.jsonl.
     """
-    kw = dict(use_plan=use_plan, max_rounds=max_rounds, beta1=beta1, beta2=beta2, record=record)
+    kw: dict[str, Any] = dict(
+        use_plan=use_plan, max_rounds=max_rounds, beta1=beta1, beta2=beta2, record=record
+    )
     per_beta, executions = [], []
     for beta in betas:
         eps = [

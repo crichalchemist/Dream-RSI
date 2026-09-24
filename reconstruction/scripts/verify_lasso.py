@@ -26,7 +26,6 @@ several GB once densified.
 
 import argparse
 import bz2
-import importlib.util
 import json
 import os
 import shutil
@@ -35,6 +34,8 @@ import tempfile
 import urllib.request
 
 import numpy as np
+
+from see.loader import load_module_from_path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -57,10 +58,7 @@ def load_evaluator(simpletes_dir, workdir):
     shutil.copy(src, dst)
     # Its default memory cap is RAM/256 per child, too small to import sklearn.
     os.environ.setdefault("EVALUATOR_CONCURRENT_PROCESSES", "1")
-    spec = importlib.util.spec_from_file_location("lasso_evaluator", dst)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    return load_module_from_path("lasso_evaluator", dst)
 
 
 def _libsvm(fname):
@@ -76,11 +74,10 @@ def _libsvm(fname):
 
 def downstream(simpletes_dir, programs, n_reps, gisette=False):
     task = os.path.join(simpletes_dir, "datasets", "numerical_tasks", "lasso_path")
-    spec = importlib.util.spec_from_file_location(
+    # also pins OMP/BLAS threads to 1, as SimpleTES does
+    gr = load_module_from_path(
         "simpletes_generate_results", os.path.join(task, "generate_results.py")
     )
-    gr = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(gr)  # also pins OMP/BLAS threads to 1, as SimpleTES does
 
     def npz(name):
         return tuple(np.load(os.path.join(task, "eval_data", name))[k] for k in "Xy")
@@ -130,7 +127,7 @@ def downstream(simpletes_dir, programs, n_reps, gisette=False):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
     ap.add_argument("--simpletes", required=True, help="path to a SimpleTES checkout")
     ap.add_argument(
         "--repeats",

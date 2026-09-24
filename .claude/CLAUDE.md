@@ -20,7 +20,8 @@ the `extract`, `lasso` and `dev` extras in `pyproject.toml` cover the tools and 
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[extract,dev]"       # add ,lasso for scripts/verify_lasso.py
+pip install -e ".[extract,lasso,dev]"  # lasso: pyright needs numpy/scikit-learn to check scripts/verify_lasso.py
+pre-commit install                    # once per clone; ruff, ruff-format, pyright run on every commit
 python tools/extract_listings.py      # PREREQUISITE: writes generated/ (2 prompts + Lasso solver)
 python tools/extract_listings.py --check   # digest drift vs tools/generated.sha256; exit 1 on drift
 python -m pytest -q                   # 47 tests, ~13s

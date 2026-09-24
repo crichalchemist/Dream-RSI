@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest*)",
+      "Bash(python3 -m pytest*)",
+      "Bash(pytest*)",
+      "Bash(PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python*)",
+      "Bash(ruff *)",
+      "Bash(pyright*)",
+      "Bash(pre-commit *)",
+      "Bash(python tools/extract_listings.py*)",
+      "Bash(python3 tools/extract_listings.py*)",
+      "Bash(python tools/check_junit.py*)",
+      "Bash(python -m see demo*)",
+      "Bash(python3 -m see demo*)"
+    ]
+  }
+}

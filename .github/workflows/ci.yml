@@ -1,4 +1,6 @@
 name: ci
+permissions:
+  contents: read
 on:
   push:
     branches: [main]
@@ -8,6 +10,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   gate:
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

@@ -20,18 +20,18 @@ the `extract`, `lasso` and `dev` extras in `pyproject.toml` cover the tools and 
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[extract,lasso,dev]"  # lasso: pyright needs numpy/scikit-learn to check scripts/verify_lasso.py
+pip install -e ".[extract,lasso,dev]" # lasso: pyright needs numpy/scikit-learn to check scripts/verify_lasso.py
 pre-commit install                    # once per clone; ruff, ruff-format, pyright run on every commit
 python tools/extract_listings.py      # PREREQUISITE: writes generated/ (2 prompts + Lasso solver)
 python tools/extract_listings.py --check   # digest drift vs tools/generated.sha256; exit 1 on drift
-python -m pytest -q                   # 47 tests, ~13s
+python -m pytest -q                   # 47 tests, ~3s
 python -m pytest -q tests/test_loop.py::test_on_policy_replay_reproduces_the_live_episode
 python -m see demo --workdir /tmp/drsi                                          # whole loop, toy task, ~8s
 python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tmp/sweep
 ```
 
 - Without `generated/`, `see demo` and `see/prompts.py` raise `FileNotFoundError` and 5 tests in
-  `tests/test_loop.py` skip (33 passed, 5 skipped instead of 38 passed).
+  `tests/test_loop.py` skip (42 passed, 5 skipped instead of 47 passed).
 - Use the venv. The system interpreter on this machine has a broken global pytest plugin
   (langsmith) that crashes collection; if you must run pytest outside the venv, prefix
   `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`.
@@ -88,7 +88,7 @@ prompts from `generated/`, which is why extraction is a prerequisite.
 - Test names state the paper claim or business outcome they protect
   (`test_eq1_matches_the_paper_formula`, `test_broken_versions_score_minus_infinity_and_are_never_deployed`).
   Keep that style.
-- Run everything from `reconstruction/`; `tests/conftest.py` and the scripts put it on `sys.path`.
+- Run everything from `reconstruction/` inside its venv; the package is installed editable, so nothing puts it on `sys.path`.
 - `LoopConfig.serialize_eval=True` by default: evaluations are serialized because timing-based
   tasks interfere with each other. Do not parallelize evaluation for Lasso or kernel tasks.
 - An interrupted iteration cannot be resumed: `online()` raises if `runs/iterNNNN/` already

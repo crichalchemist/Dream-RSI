@@ -18,9 +18,11 @@ repos:
         files: ^reconstruction/
   - repo: local
     hooks:
+      # system hook on purpose: the pyright-python mirror's isolated env cannot resolve numpy/pymupdf.
+      # Expects the venv at reconstruction/.venv (README, CLAUDE.md); --pythonpath pins the interpreter.
       - id: pyright
         name: pyright (reconstruction)
-        entry: reconstruction/.venv/bin/pyright --project reconstruction
+        entry: reconstruction/.venv/bin/pyright --project reconstruction --pythonpath reconstruction/.venv/bin/python
         language: system
         pass_filenames: false
-        files: ^reconstruction/.*\.py$
+        files: ^reconstruction/(.*\.py|pyproject\.toml)$

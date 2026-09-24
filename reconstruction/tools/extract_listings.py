@@ -40,6 +40,8 @@ NUM_FONT, NUM_SIZE, CODE_FONT = "XCharter-Roman", 5.98, "LMMono8-Regular"
 FIRST_LISTING_PAGE = 17  # 0-based; Appendix B starts on page 18
 NO_SPACE_BEFORE = tuple("‘’?,.;:)]")
 GLYPHS = {"‘": "`", "’": "'", "“": '"', "”": '"', "–": "--", "−": "-", "˜": "~", "∼": "~"}
+# Listing order in the PDF. tools/generated.sha256 and tests/test_extract_manifest.py
+# depend on this order; do not reorder.
 OUTPUTS = ["exploration_prompt.md", "policy_improvement_prompt.md", "lasso_path_dream_rsi.py"]
 EXPECTED_LINES = [28, 273, 847]
 MANIFEST = os.path.join(HERE, "generated.sha256")  # sha256sum format: "<hex>  <name>"

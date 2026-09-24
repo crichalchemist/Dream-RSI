@@ -1,0 +1,6 @@
+# core package (see/) is standard library only
+pymupdf>=1.24      # tools/extract_listings.py
+numpy
+scikit-learn
+psutil             # SimpleTES Lasso evaluator
+pytest

@@ -20,15 +20,19 @@ that file before trusting any number this code produces.
 | KernelBench tasks | KernelBench | no adapter |
 | Runs with real LLM agents | Gemini CLI or other | wired (`scripts/run_dream_rsi.py`), not run here |
 
-The core package is standard-library Python.
+The core package is standard-library Python; `pyproject.toml` extras cover the tools
+(`extract`), the SimpleTES scripts (`lasso`) and the quality gate (`dev`). The package is
+installed in editable mode only: `see/prompts.py` finds `generated/` next to the source tree, so
+a wheel install cannot locate the prompts.
 
 ## Use
 
 ```bash
 cd reconstruction
-pip install -r requirements.txt
-python tools/extract_listings.py          # writes generated/: 2 prompts + the Lasso solver
-python -m pytest -q tests                 # 38 tests
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e ".[extract,dev]"           # add ,lasso for scripts/verify_lasso.py
+python tools/extract_listings.py          # prerequisite: writes generated/ (2 prompts + the Lasso solver)
+python -m pytest -q                       # 38 tests; 5 of them skip while generated/ is missing
 python -m see demo --workdir /tmp/drsi    # whole loop on a toy task, scripted agents
 ```
 

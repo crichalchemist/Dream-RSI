@@ -15,22 +15,24 @@ the PDF. It is gitignored and must never be committed.
 
 ## Commands
 
-All from `reconstruction/`. The core package (`see/`) is standard-library Python; `requirements.txt`
-covers the tools and scripts.
+All from `reconstruction/`, inside its venv. The core package (`see/`) is standard-library Python;
+the `extract`, `lasso` and `dev` extras in `pyproject.toml` cover the tools and scripts.
 
 ```bash
-pip install -r requirements.txt
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e ".[extract,dev]"       # add ,lasso for scripts/verify_lasso.py
 python tools/extract_listings.py      # PREREQUISITE: writes generated/ (2 prompts + Lasso solver)
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests                       # 38 tests, ~13s
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_loop.py::test_on_policy_replay_reproduces_the_live_episode
+python -m pytest -q                   # 38 tests, ~13s
+python -m pytest -q tests/test_loop.py::test_on_policy_replay_reproduces_the_live_episode
 python -m see demo --workdir /tmp/drsi                                          # whole loop, toy task, ~8s
 python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tmp/sweep
 ```
 
 - Without `generated/`, `see demo` and `see/prompts.py` raise `FileNotFoundError` and 5 tests in
   `tests/test_loop.py` skip (33 passed, 5 skipped instead of 38 passed).
-- `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` is needed on this machine: a globally installed pytest plugin
-  (langsmith) crashes collection before any test runs. It is harmless elsewhere.
+- Use the venv. The system interpreter on this machine has a broken global pytest plugin
+  (langsmith) that crashes collection; if you must run pytest outside the venv, prefix
+  `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`.
 - Paper-task scripts need `git clone --depth 1 https://github.com/wq-will/SimpleTES ../SimpleTES`
   plus g++, OpenMP and system Eigen (`libeigen3-dev`). `scripts/verify_lasso.py` scores Listing 3
   with SimpleTES's evaluator; `scripts/run_dream_rsi.py` runs the loop with real coding agents and

@@ -11,13 +11,10 @@ M, K1, K2, lambda and the beta grid are not given in the paper.
 import argparse
 import json
 import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from see.live import CommandAgent  # noqa: E402
-from see.loop import DreamRSI, LoopConfig  # noqa: E402
-from see.tasks import SIMPLETES_TASKS, simpletes_task  # noqa: E402
+from see.live import CommandAgent
+from see.loop import DreamRSI, LoopConfig
+from see.tasks import SIMPLETES_TASKS, simpletes_task
 
 
 def agent(spec: str, timeout: float) -> CommandAgent:

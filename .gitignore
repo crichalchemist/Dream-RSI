@@ -1,3 +1,4 @@
+.remember/
 # Local maintainer notes — never publish
 *.local.md
 
@@ -16,6 +17,7 @@ logs/
 results/raw/
 wandb/
 *.ckpt
+SimpleTES/
 
 # OS / editor
 .DS_Store

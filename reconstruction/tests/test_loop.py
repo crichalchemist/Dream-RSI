@@ -11,18 +11,33 @@ from see.pool import context_factory, load_pool
 from see.toy import ScriptedDiscoveryAgent, ScriptedPolicyAgent, make_task
 
 pytestmark = pytest.mark.skipif(
-    not os.path.exists(os.path.join(os.path.dirname(os.path.dirname(__file__)), "generated",
-                                    "policy_improvement_prompt.md")),
-    reason="run tools/extract_listings.py first (needs the paper's prompts)")
+    not os.path.exists(
+        os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "generated", "policy_improvement_prompt.md"
+        )
+    ),
+    reason="run tools/extract_listings.py first (needs the paper's prompts)",
+)
 
 
 @pytest.fixture(scope="module")
 def finished_loop(tmp_path_factory):
     work = str(tmp_path_factory.mktemp("loop"))
-    cfg = LoopConfig(workdir=work, iterations=3, versions=3, max_parallelism=4,
-                     fallback_grid=(4, 5), hard_max_grid=(8, 8), betas=(0.0, 0.5, 1.0))
-    loop = DreamRSI(cfg, make_task(work), ScriptedDiscoveryAgent(seed=7),
-                    ScriptedPolicyAgent(betas=(0.3, 0.9), broken_every=2))
+    cfg = LoopConfig(
+        workdir=work,
+        iterations=3,
+        versions=3,
+        max_parallelism=4,
+        fallback_grid=(4, 5),
+        hard_max_grid=(8, 8),
+        betas=(0.0, 0.5, 1.0),
+    )
+    loop = DreamRSI(
+        cfg,
+        make_task(work),
+        ScriptedDiscoveryAgent(seed=7),
+        ScriptedPolicyAgent(betas=(0.3, 0.9), broken_every=2),
+    )
     loop.run()
     return loop
 
@@ -38,8 +53,9 @@ def test_loop_writes_the_layout_listing_2_refers_to(finished_loop):
     rounds = sorted(d for d in os.listdir(os.path.join(w, "policy_dev", "history")) if d[0] == "r")
     assert len(rounds) == 9  # 3 iterations x M = 3 versions
     # one replay episode per (trace, beta) plus one per trace at the default beta
-    first = os.path.join(w, "policy_dev", "history", rounds[0], "proposal_results",
-                         "policy_execution_traces.jsonl")
+    first = os.path.join(
+        w, "policy_dev", "history", rounds[0], "proposal_results", "policy_execution_traces.jsonl"
+    )
     with open(first) as f:
         assert sum(1 for _ in f) == 1 * (3 + 1)
 
@@ -88,8 +104,16 @@ def test_agent_crash_is_a_failed_attempt_not_a_failed_episode(tmp_path):
 
     tree = tmp_path / "tree"
     tree.mkdir()
-    q = LiveQuestion(task, crashes_on_roots, str(tree), str(tmp_path / "hist"), 1.0,
-                     max_parallelism=2, branch_count=2, refine_count=1)
+    q = LiveQuestion(
+        task,
+        crashes_on_roots,
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=2,
+        branch_count=2,
+        refine_count=1,
+    )
     obs = q.probe_batch(q.legal_roots())
     assert [o.fail_class for o in obs] == ["no_program", "no_program"]
     assert not obs[0].evaluated

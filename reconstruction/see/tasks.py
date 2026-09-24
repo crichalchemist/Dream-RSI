@@ -7,6 +7,7 @@ holds init_program.py, evaluator.py (``evaluate(path)``, larger
 statement .txt. The four KernelBench tasks need KernelBench and a GPU and
 have no adapter here.
 """
+
 import glob
 import importlib.util
 import os
@@ -34,8 +35,9 @@ def simpletes_task(simpletes_dir: str, name: str, workdir: str) -> TaskSpec:
     shutil.copy(os.path.join(local, "init_program.py"), os.path.join(base, "init_program.py"))
     statement = sorted(glob.glob(os.path.join(local, "*.txt")))[0]
     os.environ.setdefault("EVALUATOR_CONCURRENT_PROCESSES", "1")  # evaluations are serialised
-    spec = importlib.util.spec_from_file_location(f"simpletes_{name}_evaluator",
-                                                  os.path.join(local, "evaluator.py"))
+    spec = importlib.util.spec_from_file_location(
+        f"simpletes_{name}_evaluator", os.path.join(local, "evaluator.py")
+    )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return TaskSpec(name, base, "init_program.py", statement, mod.evaluate)

@@ -7,6 +7,7 @@ evaluator returns the number. The scripted policy agent writes the example
 portfolio policy with a different default beta each revision. Nothing here
 models a real coding agent; it only exercises the plumbing.
 """
+
 import hashlib
 import json
 import os
@@ -21,7 +22,9 @@ PROGRAM = "solution.json"
 
 
 def _rng(*parts) -> random.Random:
-    return random.Random(int(hashlib.sha256("/".join(map(str, parts)).encode()).hexdigest()[:16], 16))
+    return random.Random(
+        int(hashlib.sha256("/".join(map(str, parts)).encode()).hexdigest()[:16], 16)
+    )
 
 
 def evaluate(path: str) -> dict:
@@ -29,8 +32,13 @@ def evaluate(path: str) -> dict:
         with open(path) as f:
             x = float(json.load(f)["x"])
     except Exception as e:
-        return {"combined_score": 0.0, "validity": 0.0, "n_valid": 0, "n_total": 1,
-                "error": f"ValueError: unreadable solution ({type(e).__name__})"}
+        return {
+            "combined_score": 0.0,
+            "validity": 0.0,
+            "n_valid": 0,
+            "n_total": 1,
+            "error": f"ValueError: unreadable solution ({type(e).__name__})",
+        }
     return {"combined_score": x, "validity": 1.0, "n_valid": 1, "n_total": 1}
 
 
@@ -58,7 +66,11 @@ class ScriptedDiscoveryAgent:
         path = os.path.join(target, PROGRAM)
         x = 1.0  # repair a broken parent from the nearest readable ancestor
         for a in range(attempt, -1, -1):
-            src = path if a == attempt else os.path.join(cwd, f"attempt_b{branch:03d}_a{a:03d}", PROGRAM)
+            src = (
+                path
+                if a == attempt
+                else os.path.join(cwd, f"attempt_b{branch:03d}_a{a:03d}", PROGRAM)
+            )
             try:
                 with open(src) as f:
                     x = float(json.load(f)["x"])

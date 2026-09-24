@@ -4,10 +4,12 @@ Every public name here is one Listing 2 tells the policy-development agent to
 import or call. Field lists follow the prompt verbatim; semantics the prompt
 leaves open are marked "inferred" and recorded in GAPS.md.
 """
+
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 
 @dataclasses.dataclass(frozen=True)
@@ -17,15 +19,15 @@ class Observation:
     cell_id: str
     branch: int
     attempt: int
-    score: Optional[float]
+    score: float | None
     evaluated: bool
     valid: bool
     fail_class: str
-    error: Optional[str]
-    delta_vs_baseline: Optional[float]
-    delta_vs_parent: Optional[float]
-    n_valid: Optional[int]
-    n_total: Optional[int]
+    error: str | None
+    delta_vs_baseline: float | None
+    delta_vs_parent: float | None
+    n_valid: int | None
+    n_total: int | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -35,7 +37,7 @@ class CellMeta:
     cell_id: str
     branch: int
     attempt: int
-    parent_id: Optional[str]
+    parent_id: str | None
     seq: int
     tags: Mapping[str, Any]
 
@@ -66,8 +68,8 @@ class GridPlanningContext:
     hard_max_branch_count: int
     hard_max_refine_count: int
     max_parallelism: int
-    trace_branch_count: Optional[int] = None
-    trace_refine_count: Optional[int] = None
+    trace_branch_count: int | None = None
+    trace_refine_count: int | None = None
 
 
 @dataclasses.dataclass
@@ -79,7 +81,7 @@ class SimResult:
     """
 
     curve: list = dataclasses.field(default_factory=list)
-    best_score: Optional[float] = None
+    best_score: float | None = None
     total_probes: int = 0
     decision_rounds: int = 0
     effective_sequential_rounds: int = 0
@@ -91,11 +93,13 @@ def _budget_done(question, budget) -> bool:
 
 
 def _record_curve(res: SimResult, question) -> None:
-    res.curve.append({
-        "probes": question.budget_spent,
-        "rounds": question.decision_rounds,
-        "best": question.best_so_far,
-    })
+    res.curve.append(
+        {
+            "probes": question.budget_spent,
+            "rounds": question.decision_rounds,
+            "best": question.best_so_far,
+        }
+    )
 
 
 def finalize_result(question, res: SimResult) -> SimResult:
@@ -117,12 +121,12 @@ class LLMDesignedMethod:
 
     NAME = "LLMDesignedMethod"
 
-    def __init__(self, config: Optional[Mapping[str, Any]] = None):
+    def __init__(self, config: Mapping[str, Any] | None = None):
         self.config = dict(config or {})
 
     def solve(self, question, budget=None) -> SimResult:
         raise NotImplementedError
 
-    def plan_grid(self, context: GridPlanningContext) -> Optional[GridPlan]:
+    def plan_grid(self, context: GridPlanningContext) -> GridPlan | None:
         """Template stub; returning None hands the grid to the runner's fallback."""
         return None

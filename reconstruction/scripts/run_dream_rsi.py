@@ -8,6 +8,7 @@ JSON argv list containing "{prompt}". Defaults mirror the paper's
 Gemini-3.1-Pro setting (10 workers, 10 branches x 11 attempts, 5 rounds);
 M, K1, K2, lambda and the beta grid are not given in the paper.
 """
+
 import argparse
 import json
 import os
@@ -37,12 +38,21 @@ def main(argv=None):
     ap.add_argument("--objective", choices=("pareto", "eq1"), default="pareto")
     a = ap.parse_args(argv)
     os.makedirs(a.workdir, exist_ok=True)
-    cfg = LoopConfig(workdir=a.workdir, iterations=a.iterations, versions=a.versions,
-                     max_parallelism=a.workers, fallback_grid=tuple(a.grid),
-                     hard_max_grid=tuple(a.hard_max), objective=a.objective)
-    loop = DreamRSI(cfg, simpletes_task(a.simpletes, a.task, a.workdir),
-                    agent(a.discovery_agent, a.agent_timeout),
-                    agent(a.policy_agent, a.agent_timeout))
+    cfg = LoopConfig(
+        workdir=a.workdir,
+        iterations=a.iterations,
+        versions=a.versions,
+        max_parallelism=a.workers,
+        fallback_grid=tuple(a.grid),
+        hard_max_grid=tuple(a.hard_max),
+        objective=a.objective,
+    )
+    loop = DreamRSI(
+        cfg,
+        simpletes_task(a.simpletes, a.task, a.workdir),
+        agent(a.discovery_agent, a.agent_timeout),
+        agent(a.policy_agent, a.agent_timeout),
+    )
     state = loop.run()
     print(json.dumps(state["log"][-1], indent=1, default=str))
 

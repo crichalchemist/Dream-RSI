@@ -23,6 +23,7 @@ in SimpleTES, Colon and Duke fetched from the LIBSVM site, Gisette (22 MB
 download, 85% split as in SimpleTES) with --gisette. RCV1 is left out: it is
 several GB once densified.
 """
+
 import argparse
 import bz2
 import importlib.util
@@ -41,9 +42,13 @@ LIBSVM = "https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary/"
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "dream-rsi-recon")
 # Paper Fig. 3(a), ms on the authors' hardware:
 # sklearn, SimpleTES, SimpleTES (dagger row, undefined in the paper), Dream-RSI Pro, Flash.
-PAPER_MS = {"Gisette": (11275.2, 3141.9, 8651.0, 2841.0, 1091.9),
-            "DNA": (93.8, 15.9, 37.6, 49.9, 31.4), "Leukemia": (227.2, 15.5, 28.2, 30.2, 21.0),
-            "Colon": (229.8, 11.6, 19.5, 16.4, 12.2), "Duke Breast": (374.0, 18.1, 31.1, 32.5, 23.6)}
+PAPER_MS = {
+    "Gisette": (11275.2, 3141.9, 8651.0, 2841.0, 1091.9),
+    "DNA": (93.8, 15.9, 37.6, 49.9, 31.4),
+    "Leukemia": (227.2, 15.5, 28.2, 30.2, 21.0),
+    "Colon": (229.8, 11.6, 19.5, 16.4, 12.2),
+    "Duke Breast": (374.0, 18.1, 31.1, 32.5, 23.6),
+}
 
 
 def load_evaluator(simpletes_dir, workdir):
@@ -71,14 +76,18 @@ def _libsvm(fname):
 
 def downstream(simpletes_dir, programs, n_reps, gisette=False):
     task = os.path.join(simpletes_dir, "datasets", "numerical_tasks", "lasso_path")
-    spec = importlib.util.spec_from_file_location("simpletes_generate_results",
-                                                  os.path.join(task, "generate_results.py"))
+    spec = importlib.util.spec_from_file_location(
+        "simpletes_generate_results", os.path.join(task, "generate_results.py")
+    )
     gr = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gr)  # also pins OMP/BLAS threads to 1, as SimpleTES does
     npz = lambda name: tuple(np.load(os.path.join(task, "eval_data", name))[k] for k in "Xy")
-    datasets = {"DNA": lambda: npz("real_dna.npz"), "Leukemia": lambda: npz("real_leukemia.npz"),
-                "Colon": lambda: _libsvm("colon-cancer.bz2"),
-                "Duke Breast": lambda: _libsvm("duke.bz2")}
+    datasets = {
+        "DNA": lambda: npz("real_dna.npz"),
+        "Leukemia": lambda: npz("real_leukemia.npz"),
+        "Colon": lambda: _libsvm("colon-cancer.bz2"),
+        "Duke Breast": lambda: _libsvm("duke.bz2"),
+    }
     if gisette:
         from sklearn.model_selection import train_test_split
 
@@ -86,13 +95,16 @@ def downstream(simpletes_dir, programs, n_reps, gisette=False):
             X, y = _libsvm("gisette_scale.bz2")
             X, _, y, _ = train_test_split(X, y, test_size=0.15, random_state=42)
             return X, y
+
         datasets = {"Gisette": _gisette, **datasets}
     simpletes_fn, err1 = gr.load_solver(programs["simpletes_best"])
     dream_fn, err2 = gr.load_solver(programs["dream_rsi"])
     if err1 or err2:
         sys.exit(f"solver load failed: {err1 or err2}")
-    print(f"\n{'dataset':<14}{'shape':>13}{'sklearn':>9}{'SimpleTES':>11}{'Dream-RSI':>11}"
-          f"{'gap(D)':>9}  S/D here | paper S/D: Pro Flash  S+/D: Pro Flash  sk/D here Pro Flash")
+    print(
+        f"\n{'dataset':<14}{'shape':>13}{'sklearn':>9}{'SimpleTES':>11}{'Dream-RSI':>11}"
+        f"{'gap(D)':>9}  S/D here | paper S/D: Pro Flash  S+/D: Pro Flash  sk/D here Pro Flash"
+    )
     rows = {}
     for name, load in datasets.items():
         X, y = load()
@@ -101,22 +113,33 @@ def downstream(simpletes_dir, programs, n_reps, gisette=False):
         ok = s["valid"] and d["valid"]
         ratio = s["ms"] / d["ms"] if ok else float("nan")
         sk, st, std, pro, fl = paper
-        print(f"{name:<14}{str(X.shape):>13}{sk_ms:>9.1f}{s['ms']:>11.1f}{d['ms']:>11.1f}"
-              f"{d['gap']:>9.1e}{ratio:>10.2f} |{st / pro:>15.2f}{st / fl:>6.2f}{std / pro:>10.2f}"
-              f"{std / fl:>6.2f}{sk_ms / d['ms']:>11.2f}{sk / pro:>5.1f}{sk / fl:>6.1f}")
+        print(
+            f"{name:<14}{X.shape!s:>13}{sk_ms:>9.1f}{s['ms']:>11.1f}{d['ms']:>11.1f}"
+            f"{d['gap']:>9.1e}{ratio:>10.2f} |{st / pro:>15.2f}{st / fl:>6.2f}{std / pro:>10.2f}"
+            f"{std / fl:>6.2f}{sk_ms / d['ms']:>11.2f}{sk / pro:>5.1f}{sk / fl:>6.1f}"
+        )
         rows[name] = {"shape": X.shape, "sklearn_ms": sk_ms, "simpletes": s, "dream_rsi": d}
-    print("S/D = SimpleTES ms / Dream-RSI ms (above 1: the paper's solver is faster); "
-          "S+ = the paper's dagger row; sk/D = sklearn ms / Dream-RSI ms")
+    print(
+        "S/D = SimpleTES ms / Dream-RSI ms (above 1: the paper's solver is faster); "
+        "S+ = the paper's dagger row; sk/D = sklearn ms / Dream-RSI ms"
+    )
     return rows
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--simpletes", required=True, help="path to a SimpleTES checkout")
-    ap.add_argument("--repeats", type=int, default=1,
-                    help="evaluator runs per program (each draws fresh instances)")
-    ap.add_argument("--downstream", action="store_true",
-                    help="time the held-out datasets instead of the search instances")
+    ap.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        help="evaluator runs per program (each draws fresh instances)",
+    )
+    ap.add_argument(
+        "--downstream",
+        action="store_true",
+        help="time the held-out datasets instead of the search instances",
+    )
     ap.add_argument("--gisette", action="store_true", help="with --downstream, add Gisette")
     ap.add_argument("--json", help="write the per-problem results here")
     args = ap.parse_args(argv)
@@ -128,9 +151,13 @@ def main(argv=None):
     programs = {
         "dream_rsi": dream,
         "glmnet_port": os.path.join(task, "init_program.py"),
-        "simpletes_best": os.path.join(args.simpletes, "best_results", "scientific_algorithms",
-                                       "lasso_regularization_path",
-                                       "lasso_regularization_path_best.py"),
+        "simpletes_best": os.path.join(
+            args.simpletes,
+            "best_results",
+            "scientific_algorithms",
+            "lasso_regularization_path",
+            "lasso_regularization_path_best.py",
+        ),
     }
     if args.downstream:
         rows = downstream(args.simpletes, programs, n_reps=5, gisette=args.gisette)
@@ -153,10 +180,12 @@ def main(argv=None):
     for name, runs in results.items():
         for i, r in enumerate(runs):
             gaps = [p["max_gap"] for p in r.get("problems", [])]
-            print(f"{name:<16}{i:>4}{r['n_valid']:>5}/{r['n_total']:<2}"
-                  f"{r['geo_mean_sol_ms']:>13.2f}{r['combined_score']:>10.4f}"
-                  f"{(max(gaps) if gaps else float('nan')):>11.1e}"
-                  + (f"  ERROR {r['error'][:60]}" if r.get("error") else ""))
+            print(
+                f"{name:<16}{i:>4}{r['n_valid']:>5}/{r['n_total']:<2}"
+                f"{r['geo_mean_sol_ms']:>13.2f}{r['combined_score']:>10.4f}"
+                f"{(max(gaps) if gaps else float('nan')):>11.1e}"
+                + (f"  ERROR {r['error'][:60]}" if r.get("error") else "")
+            )
     base = results["glmnet_port"]
     print("\nspeed-up over the glmnet port (ratio of geo-mean ms, per run):")
     for name, runs in results.items():

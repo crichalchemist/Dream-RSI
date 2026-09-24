@@ -22,6 +22,7 @@ Listing 2 (U+00D7 in "branch x attempt", U+2192 in "parent -> child") are kept.
 
 Usage: python tools/extract_listings.py [--pdf PATH] [--out DIR]
 """
+
 import argparse
 import collections
 import json
@@ -37,10 +38,8 @@ X0, CW = 76.34, 4.6575  # x origin of code column 0 and monospace advance (pt)
 NUM_FONT, NUM_SIZE, CODE_FONT = "XCharter-Roman", 5.98, "LMMono8-Regular"
 FIRST_LISTING_PAGE = 17  # 0-based; Appendix B starts on page 18
 NO_SPACE_BEFORE = tuple("‘’?,.;:)]")
-GLYPHS = {"‘": "`", "’": "'", "“": '"', "”": '"',
-          "–": "--", "−": "-", "˜": "~", "∼": "~"}
-OUTPUTS = ["exploration_prompt.md", "policy_improvement_prompt.md",
-           "lasso_path_dream_rsi.py"]
+GLYPHS = {"‘": "`", "’": "'", "“": '"', "”": '"', "–": "--", "−": "-", "˜": "~", "∼": "~"}
+OUTPUTS = ["exploration_prompt.md", "policy_improvement_prompt.md", "lasso_path_dream_rsi.py"]
 EXPECTED_LINES = [28, 273, 847]
 
 
@@ -79,8 +78,11 @@ def extract(pdf_path):
     listings, current, last = [], None, None
     for page_index in range(FIRST_LISTING_PAGE, doc.page_count):
         for row in _rows(doc[page_index]):
-            nums = [s for s in row if s["font"] == NUM_FONT
-                    and round(s["size"], 2) == NUM_SIZE and s["origin"][0] < X0]
+            nums = [
+                s
+                for s in row
+                if s["font"] == NUM_FONT and round(s["size"], 2) == NUM_SIZE and s["origin"][0] < X0
+            ]
             code = []
             if any(s["font"] == CODE_FONT for s in row):
                 # keep symbol-font glyphs (x, ->) set inline in the listing
@@ -118,15 +120,25 @@ def main(argv=None):
     args = ap.parse_args(argv)
     texts = extract(args.pdf)
     if [t.count("\n") for t in texts] != EXPECTED_LINES:
-        sys.exit(f"unexpected listing sizes {[t.count(chr(10)) for t in texts]}; "
-                 f"expected {EXPECTED_LINES} (different PDF build?)")
+        sys.exit(
+            f"unexpected listing sizes {[t.count(chr(10)) for t in texts]}; "
+            f"expected {EXPECTED_LINES} (different PDF build?)"
+        )
     os.makedirs(args.out, exist_ok=True)
     for name, text in zip(OUTPUTS, texts):
         with open(os.path.join(args.out, name), "w") as f:
             f.write(text)
     non_ascii = sorted({c for t in texts for c in t if ord(c) > 126})
-    print(json.dumps({"out": args.out, "files": OUTPUTS,
-                      "lines": EXPECTED_LINES, "non_ascii_left": non_ascii}))
+    print(
+        json.dumps(
+            {
+                "out": args.out,
+                "files": OUTPUTS,
+                "lines": EXPECTED_LINES,
+                "non_ascii_left": non_ascii,
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

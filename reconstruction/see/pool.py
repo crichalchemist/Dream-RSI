@@ -1,4 +1,5 @@
 """Reading the replay pool (trace_pool/iter*/) with prefix-safe planning contexts."""
+
 import glob
 import json
 import os
@@ -29,8 +30,15 @@ def context_factory(pool: list, fallback: tuple, hard_max: tuple):
     def context_for(trace: Trace) -> GridPlanningContext:
         earlier = tuple(m for m in manifests[: index[trace.trace_id]] if m is not None)
         tb, tr = trace.grid
-        return GridPlanningContext(earlier, fallback[0], fallback[1], hard_max[0], hard_max[1],
-                                   trace.max_parallelism, trace_branch_count=tb,
-                                   trace_refine_count=tr)
+        return GridPlanningContext(
+            earlier,
+            fallback[0],
+            fallback[1],
+            hard_max[0],
+            hard_max[1],
+            trace.max_parallelism,
+            trace_branch_count=tb,
+            trace_refine_count=tr,
+        )
 
     return context_for

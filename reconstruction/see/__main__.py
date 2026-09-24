@@ -1,4 +1,5 @@
 """Command line: ``python -m see sweep|demo ...`` (run from reconstruction/)."""
+
 import argparse
 import json
 import os
@@ -16,8 +17,15 @@ def cmd_sweep(a):
     if not pool:
         sys.exit(f"no traces under {a.pool}")
     report, executions = beta_sweep(
-        cls, [t for t, _ in pool], context_for=context_factory(pool, a.fallback, a.hard_max),
-        betas=a.betas, lam=a.lam, beta1=a.beta1, beta2=a.beta2, max_rounds=a.max_rounds)
+        cls,
+        [t for t, _ in pool],
+        context_for=context_factory(pool, a.fallback, a.hard_max),
+        betas=a.betas,
+        lam=a.lam,
+        beta1=a.beta1,
+        beta2=a.beta2,
+        max_rounds=a.max_rounds,
+    )
     report["plan_grid_override"] = overrides_plan_grid(cls)
     report["method"] = os.path.abspath(a.method)
     os.makedirs(a.out, exist_ok=True)
@@ -27,24 +35,41 @@ def cmd_sweep(a):
         for e in executions:
             f.write(json.dumps(e) + "\n")
     p = report["pareto"]
-    print(json.dumps({"policy": report["policy"], "valid": report["valid"], "reward": p["reward"],
-                      "auc": p["auc"], "parallel_penalty": p["parallel_penalty"],
-                      "eq1_V": report["eq1"]["V"]}))
+    print(
+        json.dumps(
+            {
+                "policy": report["policy"],
+                "valid": report["valid"],
+                "reward": p["reward"],
+                "auc": p["auc"],
+                "parallel_penalty": p["parallel_penalty"],
+                "eq1_V": report["eq1"]["V"],
+            }
+        )
+    )
 
 
 def cmd_demo(a):
     from see.loop import DreamRSI, LoopConfig
     from see.toy import ScriptedDiscoveryAgent, ScriptedPolicyAgent, make_task
 
-    cfg = LoopConfig(workdir=a.workdir, iterations=a.iterations, versions=a.versions,
-                     max_parallelism=4, fallback_grid=(4, 5), hard_max_grid=(8, 8))
+    cfg = LoopConfig(
+        workdir=a.workdir,
+        iterations=a.iterations,
+        versions=a.versions,
+        max_parallelism=4,
+        fallback_grid=(4, 5),
+        hard_max_grid=(8, 8),
+    )
     loop = DreamRSI(cfg, make_task(a.workdir), ScriptedDiscoveryAgent(), ScriptedPolicyAgent())
     state = loop.run()
     for entry in state["log"]:
         live = entry["live"]
-        print(f"iter {entry['iteration']}: grid {live['effective_grid']} probes {live['probes']} "
-              f"rounds {live['decision_rounds']} best {live['best_score']} -> selected "
-              f"{entry.get('selected')} from {[round(c['score'], 3) for c in entry['offline']]}")
+        print(
+            f"iter {entry['iteration']}: grid {live['effective_grid']} probes {live['probes']} "
+            f"rounds {live['decision_rounds']} best {live['best_score']} -> selected "
+            f"{entry.get('selected')} from {[round(c['score'], 3) for c in entry['offline']]}"
+        )
 
 
 def main(argv=None):

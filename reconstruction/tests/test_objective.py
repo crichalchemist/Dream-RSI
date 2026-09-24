@@ -11,7 +11,8 @@ from see.world import Cell, Trace
 def test_eq1_matches_the_paper_formula():
     # V = max s - b1 * N + b2 * N / max(1, k)
     assert eq1_value(2.0, 1.0, probes=12, rounds=3, beta1=0.01, beta2=0.05) == pytest.approx(
-        2.0 - 0.12 + 0.05 * 4)
+        2.0 - 0.12 + 0.05 * 4
+    )
     assert eq1_value(None, 1.0, probes=0, rounds=0, beta1=0.5, beta2=0.5) == 1.0  # root only
 
 

@@ -21,10 +21,16 @@ branch only after the repair budget; roots are taken in creation order,
 never by branch id; stopping happens only when no role has a candidate.
 Grid rule: see plan_grid.
 """
+
 import math
 
 from see.policy.api import (
-    GridPlan, LLMDesignedMethod, SimResult, _budget_done, _record_curve, finalize_result,
+    GridPlan,
+    LLMDesignedMethod,
+    SimResult,
+    _budget_done,
+    _record_curve,
+    finalize_result,
 )
 from see.policy.observation_signal import HARD_FAIL_CLASSES, is_repairable_failure, is_success
 
@@ -42,10 +48,10 @@ class OptimalPolicy(LLMDesignedMethod):
     def _schedule(beta):
         return {
             "patience": 1 + round(3 * beta),  # probes after the anchor before "stalled"
-            "repairs": 1 + round(2 * beta),   # consecutive repairable failures tolerated
-            "width": 0.3 + 0.7 * beta,        # target share of branch slots kept active
-            "keep": 0.5 * (1.0 - beta),       # stalled branches below this strength close
-            "reserve": beta >= 0.5,           # stalled-but-kept branches may fill idle workers
+            "repairs": 1 + round(2 * beta),  # consecutive repairable failures tolerated
+            "width": 0.3 + 0.7 * beta,  # target share of branch slots kept active
+            "keep": 0.5 * (1.0 - beta),  # stalled branches below this strength close
+            "reserve": beta >= 0.5,  # stalled-but-kept branches may fill idle workers
         }
 
     # -- prefix analysis ------------------------------------------------------
@@ -67,7 +73,9 @@ class OptimalPolicy(LLMDesignedMethod):
                     break
                 trailing.append(o)
             states[b] = {
-                "last": traj[-1], "anchor": anchor, "fails": len(trailing),
+                "last": traj[-1],
+                "anchor": anchor,
+                "fails": len(trailing),
                 "hard": any(o.fail_class in HARD_FAIL_CLASSES for o in trailing),
                 "since": None if anchor_at is None else traj[-1].attempt - anchor_at,
             }
@@ -94,18 +102,26 @@ class OptimalPolicy(LLMDesignedMethod):
         prefix = question.observed()
         states = self._trajectories(prefix, question.baseline_score)
         roots = question.legal_roots()
-        frontier = {question.meta(c).branch: c for c in question.legal_actions() if c not in set(roots)}
+        frontier = {
+            question.meta(c).branch: c for c in question.legal_actions() if c not in set(roots)
+        }
         live = {b: s for b, s in states.items() if b in frontier and not self._closed(s, sched)}
 
         def stalled(s):
             return s["since"] is not None and s["since"] > sched["patience"]
 
-        exploit = sorted((b for b, s in live.items() if is_success(s["last"]) and not stalled(s)),
-                         key=lambda b: (-live[b]["strength"], -(live[b]["last"].delta_vs_parent or 0.0), b))
-        recover = sorted((b for b, s in live.items() if is_repairable_failure(s["last"])),
-                         key=lambda b: (-live[b]["strength"], live[b]["fails"], b))
-        reserve = sorted((b for b, s in live.items() if is_success(s["last"]) and stalled(s)),
-                         key=lambda b: (-live[b]["strength"], b))
+        exploit = sorted(
+            (b for b, s in live.items() if is_success(s["last"]) and not stalled(s)),
+            key=lambda b: (-live[b]["strength"], -(live[b]["last"].delta_vs_parent or 0.0), b),
+        )
+        recover = sorted(
+            (b for b, s in live.items() if is_repairable_failure(s["last"])),
+            key=lambda b: (-live[b]["strength"], live[b]["fails"], b),
+        )
+        reserve = sorted(
+            (b for b, s in live.items() if is_success(s["last"]) and stalled(s)),
+            key=lambda b: (-live[b]["strength"], b),
+        )
 
         slots = question.max_parallelism
         target = max(1, math.ceil(sched["width"] * (len(states) + len(roots))))
@@ -133,12 +149,16 @@ class OptimalPolicy(LLMDesignedMethod):
 
     def plan_grid(self, context):
         """Width vs depth from completed live cycles (Listing 2 lines 222-233)."""
-        cap = lambda w, r: (min(max(1, w), context.hard_max_branch_count),
-                            min(max(0, r), context.hard_max_refine_count))
+        cap = lambda w, r: (
+            min(max(1, w), context.hard_max_branch_count),
+            min(max(0, r), context.hard_max_refine_count),
+        )
         hist = [h for h in context.history if h.get("best_score") is not None]
         if not hist:
             w, r = cap(context.fallback_branch_count, context.fallback_refine_count)
-            return GridPlan(w, r, reason="no completed live cycle: bootstrap from the fallback grid")
+            return GridPlan(
+                w, r, reason="no completed live cycle: bootstrap from the fallback grid"
+            )
         last = hist[-1]
         w, r = last["effective_grid"]["branch_count"], last["effective_grid"]["refine_count"]
         depth = last.get("best_attempt")

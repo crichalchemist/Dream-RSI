@@ -125,7 +125,7 @@ def main(argv=None):
             f"expected {EXPECTED_LINES} (different PDF build?)"
         )
     os.makedirs(args.out, exist_ok=True)
-    for name, text in zip(OUTPUTS, texts):
+    for name, text in zip(OUTPUTS, texts, strict=True):
         with open(os.path.join(args.out, name), "w") as f:
             f.write(text)
     non_ascii = sorted({c for t in texts for c in t if ord(c) > 126})

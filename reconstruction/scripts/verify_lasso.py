@@ -81,7 +81,10 @@ def downstream(simpletes_dir, programs, n_reps, gisette=False):
     )
     gr = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gr)  # also pins OMP/BLAS threads to 1, as SimpleTES does
-    npz = lambda name: tuple(np.load(os.path.join(task, "eval_data", name))[k] for k in "Xy")
+
+    def npz(name):
+        return tuple(np.load(os.path.join(task, "eval_data", name))[k] for k in "Xy")
+
     datasets = {
         "DNA": lambda: npz("real_dna.npz"),
         "Leukemia": lambda: npz("real_leukemia.npz"),
@@ -189,7 +192,9 @@ def main(argv=None):
     base = results["glmnet_port"]
     print("\nspeed-up over the glmnet port (ratio of geo-mean ms, per run):")
     for name, runs in results.items():
-        ratios = [b["geo_mean_sol_ms"] / r["geo_mean_sol_ms"] for r, b in zip(runs, base)]
+        ratios = [
+            b["geo_mean_sol_ms"] / r["geo_mean_sol_ms"] for r, b in zip(runs, base, strict=True)
+        ]
         print(f"  {name:<16}" + "  ".join(f"{x:.2f}x" for x in ratios))
     if args.json:
         with open(args.json, "w") as f:

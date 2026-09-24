@@ -82,7 +82,7 @@ def test_plan_grid_restricts_replay_and_flags_out_of_support():
             return GridPlan(context.hard_max_branch_count, 1, reason="test")
 
     t = synthetic_trace(0, branches=5, refine=6, max_parallelism=5)
-    report, execs = beta_sweep(Wide, [t], betas=(0.5,))
+    _, execs = beta_sweep(Wide, [t], betas=(0.5,))
     assert all(e["plan"]["refine_count"] == 1 for e in execs)
     assert all(e["probes"] <= 5 * 2 for e in execs)
 

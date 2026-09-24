@@ -149,10 +149,13 @@ class OptimalPolicy(LLMDesignedMethod):
 
     def plan_grid(self, context):
         """Width vs depth from completed live cycles (Listing 2 lines 222-233)."""
-        cap = lambda w, r: (
-            min(max(1, w), context.hard_max_branch_count),
-            min(max(0, r), context.hard_max_refine_count),
-        )
+
+        def cap(w, r):
+            return (
+                min(max(1, w), context.hard_max_branch_count),
+                min(max(0, r), context.hard_max_refine_count),
+            )
+
         hist = [h for h in context.history if h.get("best_score") is not None]
         if not hist:
             w, r = cap(context.fallback_branch_count, context.fallback_refine_count)

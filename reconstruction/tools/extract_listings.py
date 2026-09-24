@@ -25,6 +25,7 @@ Usage: python tools/extract_listings.py [--pdf PATH] [--out DIR]
 
 import argparse
 import collections
+import hashlib
 import json
 import os
 import sys
@@ -41,6 +42,35 @@ NO_SPACE_BEFORE = tuple("‘’?,.;:)]")
 GLYPHS = {"‘": "`", "’": "'", "“": '"', "”": '"', "–": "--", "−": "-", "˜": "~", "∼": "~"}
 OUTPUTS = ["exploration_prompt.md", "policy_improvement_prompt.md", "lasso_path_dream_rsi.py"]
 EXPECTED_LINES = [28, 273, 847]
+MANIFEST = os.path.join(HERE, "generated.sha256")  # sha256sum format: "<hex>  <name>"
+
+
+def digests(texts):
+    return {
+        name: hashlib.sha256(text.encode()).hexdigest()
+        for name, text in zip(OUTPUTS, texts, strict=True)
+    }
+
+
+def read_manifest(path=MANIFEST):
+    out = {}
+    with open(path) as f:
+        for line in f:
+            hexdigest, _, name = line.strip().partition("  ")
+            out[name] = hexdigest
+    return out
+
+
+def write_manifest(texts, path=MANIFEST):
+    with open(path, "w") as f:
+        for name, hexdigest in digests(texts).items():
+            f.write(f"{hexdigest}  {name}\n")
+
+
+def check_manifest(texts, path=MANIFEST):
+    """Names whose regenerated text differs from the manifest; empty means no drift."""
+    want = read_manifest(path)
+    return [name for name, hexdigest in digests(texts).items() if want.get(name) != hexdigest]
 
 
 def _rows(page):
@@ -119,6 +149,18 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
     ap.add_argument("--pdf", default=DEFAULT_PDF)
     ap.add_argument("--out", default=DEFAULT_OUT)
+    ap.add_argument("--manifest", default=MANIFEST)
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="compare the extraction with the manifest, write nothing, exit 1 on drift",
+    )
+    mode.add_argument(
+        "--write-manifest",
+        action="store_true",
+        help="also rewrite the manifest (only when the paper PDF is deliberately updated)",
+    )
     args = ap.parse_args(argv)
     texts = extract(args.pdf)
     if [t.count("\n") for t in texts] != EXPECTED_LINES:
@@ -126,10 +168,16 @@ def main(argv=None):
             f"unexpected listing sizes {[t.count(chr(10)) for t in texts]}; "
             f"expected {EXPECTED_LINES} (different PDF build?)"
         )
+    if args.check:
+        drift = check_manifest(texts, args.manifest)
+        print(json.dumps({"manifest": args.manifest, "drift": drift}))
+        sys.exit(1 if drift else 0)
     os.makedirs(args.out, exist_ok=True)
     for name, text in zip(OUTPUTS, texts, strict=True):
         with open(os.path.join(args.out, name), "w") as f:
             f.write(text)
+    if args.write_manifest:
+        write_manifest(texts, args.manifest)
     non_ascii = sorted({c for t in texts for c in t if ord(c) > 126})
     print(
         json.dumps(

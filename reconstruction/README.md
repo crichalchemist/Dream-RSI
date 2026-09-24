@@ -32,7 +32,7 @@ cd reconstruction
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[extract,dev]"           # add ,lasso for scripts/verify_lasso.py
 python tools/extract_listings.py          # prerequisite: writes generated/ (2 prompts + the Lasso solver)
-python -m pytest -q                       # 38 tests; 5 of them skip while generated/ is missing
+python -m pytest -q                       # 47 tests; 5 of them skip while generated/ is missing
 python -m see demo --workdir /tmp/drsi    # whole loop on a toy task, scripted agents
 ```
 

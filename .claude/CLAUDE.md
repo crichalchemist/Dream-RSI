@@ -22,7 +22,8 @@ the `extract`, `lasso` and `dev` extras in `pyproject.toml` cover the tools and 
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[extract,dev]"       # add ,lasso for scripts/verify_lasso.py
 python tools/extract_listings.py      # PREREQUISITE: writes generated/ (2 prompts + Lasso solver)
-python -m pytest -q                   # 38 tests, ~13s
+python tools/extract_listings.py --check   # digest drift vs tools/generated.sha256; exit 1 on drift
+python -m pytest -q                   # 47 tests, ~13s
 python -m pytest -q tests/test_loop.py::test_on_policy_replay_reproduces_the_live_episode
 python -m see demo --workdir /tmp/drsi                                          # whole loop, toy task, ~8s
 python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tmp/sweep

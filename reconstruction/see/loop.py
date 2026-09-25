@@ -31,7 +31,7 @@ import sys
 import time
 from collections.abc import Callable
 
-from see.live import LiveQuestion, TaskSpec, oriented_score
+from see.live import LiveQuestion, TaskSpec, kill_process_group, oriented_score
 from see.loader import load_policy
 from see.objective import DEFAULT_BETAS, DEFAULT_LAMBDA, score_of, validate_plan
 from see.policy.api import GridPlanningContext
@@ -57,6 +57,7 @@ class LoopConfig:
     beta2: float = 0.0
     objective: str = "pareto"  # "pareto" (Listing 2) or "eq1" (Sec. 3)
     sweep_timeout: float = 1800.0
+    kill_grace: float = 5.0  # seconds between SIGTERM and SIGKILL for the sweep subprocess
     initial_policy: str = BASELINE_POLICY  # pi_1: the paper starts from parallel refine
     serialize_eval: bool = True
 
@@ -307,12 +308,22 @@ class DreamRSI:
         if self.c.max_replay_rounds is not None:
             cmd += ["--max-rounds", str(self.c.max_replay_rounds)]
         report_path = os.path.join(out, "beta_sweep.json")
+        p = subprocess.Popen(
+            cmd,
+            cwd=PKG_ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,  # a timeout or an interrupt kills what the policy code forked
+        )
         try:
-            p = subprocess.run(
-                cmd, cwd=PKG_ROOT, capture_output=True, text=True, timeout=self.c.sweep_timeout
-            )
+            try:
+                _, err = p.communicate(timeout=self.c.sweep_timeout)
+            except subprocess.TimeoutExpired:
+                kill_process_group(p, self.c.kill_grace)
+                raise RuntimeError(f"sweep timed out after {self.c.sweep_timeout}s") from None
             if p.returncode != 0 or not os.path.exists(report_path):
-                raise RuntimeError(p.stderr[-2000:] or f"exit {p.returncode}")
+                raise RuntimeError(err[-2000:] or f"exit {p.returncode}")
             with open(report_path) as f:
                 return json.load(f)
         except Exception as e:
@@ -325,3 +336,6 @@ class DreamRSI:
             with open(report_path, "w") as f:
                 json.dump(report, f, indent=1)
             return report
+        finally:
+            if p.poll() is None:  # an interrupt escaped communicate(): take the child with us
+                kill_process_group(p, self.c.kill_grace)

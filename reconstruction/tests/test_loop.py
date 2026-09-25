@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import time
 
 import pytest
 
@@ -331,3 +332,29 @@ def test_interrupt_freezes_the_partial_tree_under_runs_not_the_pool(tmp_path, st
         assert len(f.readlines()) == 1  # the one round that completed
     assert os.listdir(tmp_path / "trace_pool") == []
     assert (tmp_path / "state.json").read_text() == state
+
+
+def test_sweep_timeout_kills_the_subprocess_group_and_scores_invalid(tmp_path, process_gone):
+    """A replay subprocess that hangs is killed with everything it forked, and the version
+    scores invalid exactly as a crashed one does."""
+    work = str(tmp_path)
+    cfg = LoopConfig(workdir=work, sweep_timeout=1.0, kill_grace=0.2)
+    loop = DreamRSI(cfg, make_task(work), ScriptedDiscoveryAgent(), ScriptedPolicyAgent())
+    rdir = tmp_path / "hang"
+    rdir.mkdir()
+    pid_file = rdir / "child.pid"
+    method = rdir / "method.py"
+    method.write_text(  # importing this "policy" forks a sleep, records its pid, then hangs
+        "import subprocess, time\n"
+        f"open({str(pid_file)!r}, 'w').write(str(subprocess.Popen(['sleep', '30']).pid))\n"
+        "time.sleep(30)\n"
+    )
+    started = time.time()
+    report = loop._sweep(str(method), str(rdir))
+    assert time.time() - started < 4.0
+    assert report["valid"] is False
+    assert report["errors"] == ["RuntimeError: sweep timed out after 1.0s"]
+    assert report["pareto"]["reward"] == float("-inf")
+    assert process_gone(int(pid_file.read_text()))
+    with open(rdir / "proposal_results" / "beta_sweep.json") as f:
+        assert json.load(f)["valid"] is False

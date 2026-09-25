@@ -52,8 +52,8 @@ python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tm
    so the deployed policy never regresses on the pool). The policy-development agent edits
    `policy_dev/method.py`; each version is replay-scored over every tree in the pool in a
    subprocess with a timeout (crash or illegal batch scores −∞); the argmax's sha256 is
-   re-verified against the bytes that were scored, then copied to `deployed/iterNNNN.py`;
-   `state.json` records the deployed digest beside the score.
+   re-verified against the digest taken when it was archived, before scoring, then copied to
+   `deployed/iterNNNN.py`; `state.json` records the deployed digest beside the score.
 
 Workdir layout is documented in the `see/loop.py` module docstring; the directory names are the
 ones the paper's Listing 2 prompt quotes, so do not rename them.
@@ -94,6 +94,8 @@ prompts from `generated/`, which is why extraction is a prerequisite.
 - `LoopConfig.serialize_eval=True` by default: evaluations are serialized because timing-based
   tasks interfere with each other. Do not parallelize evaluation for Lasso or kernel tasks.
 - An interrupted iteration cannot be resumed: `online()` raises if `runs/iterNNNN/` already
-  exists. Delete the partial `runs/iterNNNN/` (and the matching `trace_pool/` entry if present),
-  do not merge into it.
+  exists. Delete the partial `runs/iterNNNN/` (and the matching `trace_pool/` entry if present)
+  and the aborted iteration's `policy_dev/history/r*_tNN_m*` directories, then restart — the
+  round counter is persisted only on success, so a restart would otherwise recreate and
+  overwrite those archive names. Do not merge into it.
 - `*.local.md` files are private maintainer notes and are gitignored.

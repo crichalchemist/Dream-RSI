@@ -7,6 +7,7 @@ API) and asserts that a timeout, terminate() or an interrupt kills the whole pro
 import json
 import signal
 import sys
+import threading
 import time
 
 import pytest
@@ -121,3 +122,33 @@ def test_timeout_returns_even_when_an_escapee_holds_the_pipes(tmp_path):
     result = agent("p", cwd=str(tmp_path), target=str(tmp_path))
     assert time.time() - started < 2.0  # the escapee sleeps 3 s
     assert result["timed_out"] is True and result["stdout"] == ""
+
+
+def test_terminate_kills_live_agents_and_refuses_new_calls(tmp_path, process_gone):
+    """terminate() ends a call in flight and kills what it forked; later calls spawn nothing."""
+    pid_dir = tmp_path / "pids"
+    pid_dir.mkdir()
+    agent = CommandAgent(stand_in(pid_dir), timeout=3.0, kill_grace=0.2)
+    results: list = []
+    in_flight = threading.Thread(
+        target=lambda: results.append(agent("p", cwd=str(tmp_path), target=str(tmp_path))),
+        daemon=True,
+    )
+    in_flight.start()
+    deadline = time.time() + 2.0
+    while not grandchild_pids(pid_dir) and time.time() < deadline:
+        time.sleep(0.02)  # until the stand-in has forked its child
+    [pid] = grandchild_pids(pid_dir)
+    started = time.time()
+    agent.terminate()
+    in_flight.join(timeout=2.0)
+    assert not in_flight.is_alive() and time.time() - started < 2.0  # not the 3 s timeout
+    assert results == [{"returncode": None, "stdout": "", "stderr": "agent terminated"}]
+    assert process_gone(pid)
+    assert agent("p", cwd=str(tmp_path), target=str(tmp_path)) == {
+        "returncode": None,
+        "stdout": "",
+        "stderr": "agent terminated",
+    }
+    assert grandchild_pids(pid_dir) == [pid]  # the refused call forked nothing
+    agent.terminate()  # idempotent with nothing live

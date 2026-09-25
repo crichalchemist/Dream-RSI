@@ -90,19 +90,22 @@ class CommandAgent:
         self.kill_grace = kill_grace  # seconds between SIGTERM and SIGKILL
         self._live: set[subprocess.Popen] = set()
         self._lock = threading.Lock()
+        self._closed = False  # set by terminate(); a closed agent never spawns again
 
     def __call__(self, prompt: str, *, cwd: str, target: str) -> dict:
         argv = [prompt if a == "{prompt}" else a for a in self.argv]
-        p = subprocess.Popen(
-            argv,
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env={**os.environ, **(self.env or {})},
-            start_new_session=True,
-        )
-        with self._lock:
+        with self._lock:  # spawning under the lock closes the race with terminate()
+            if self._closed:
+                return self._terminated()
+            p = subprocess.Popen(
+                argv,
+                cwd=cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env={**os.environ, **(self.env or {})},
+                start_new_session=True,
+            )
             self._live.add(p)
         try:
             try:
@@ -116,6 +119,8 @@ class CommandAgent:
                     "stderr": f"agent timed out after {self.timeout}s",
                     "timed_out": True,
                 }
+            if self._closed:  # terminate() ended this call
+                return self._terminated()
             return {"returncode": p.returncode, "stdout": out[-4000:], "stderr": err[-4000:]}
         finally:
             if p.poll() is None:  # an exception escaped communicate(): take the group with us
@@ -123,6 +128,18 @@ class CommandAgent:
                 self._close_pipes(p)
             with self._lock:
                 self._live.discard(p)
+
+    @staticmethod
+    def _terminated() -> dict:
+        return {"returncode": None, "stdout": "", "stderr": "agent terminated"}
+
+    def terminate(self) -> None:
+        """Kill every call in flight (whole process groups) and refuse every later call."""
+        with self._lock:
+            self._closed = True
+            live = list(self._live)
+        for p in live:
+            kill_process_group(p, self.kill_grace)
 
     @staticmethod
     def _close_pipes(p: subprocess.Popen) -> None:

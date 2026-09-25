@@ -246,7 +246,8 @@ class LiveQuestion(Question):
                 if not (
                     isinstance(result, Mapping)
                     and isinstance(result.get("combined_score"), numbers.Real)  # numpy scalars pass
-                    and isinstance(result.get("error") or "", str)  # absent or None is fine
+                    # absent, None, or a string; any other falsy value is still malformed
+                    and ((err := result.get("error")) is None or isinstance(err, str))
                 ):
                     raise ValueError(f"malformed evaluator result: {repr(result)[:200]}")
                 return dict(result)

@@ -10,18 +10,9 @@ from see.objective import run_episode
 from see.pool import context_factory, load_pool
 from see.toy import ScriptedDiscoveryAgent, ScriptedPolicyAgent, make_task
 
-pytestmark = pytest.mark.skipif(
-    not os.path.exists(
-        os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "generated", "policy_improvement_prompt.md"
-        )
-    ),
-    reason="run tools/extract_listings.py first (needs the paper's prompts)",
-)
-
 
 @pytest.fixture(scope="module")
-def finished_loop(tmp_path_factory):
+def finished_loop(tmp_path_factory, stub_prompts):
     work = str(tmp_path_factory.mktemp("loop"))
     cfg = LoopConfig(
         workdir=work,
@@ -94,7 +85,7 @@ def test_plan_contexts_only_see_earlier_cycles(finished_loop):
         assert [m["iteration"] for m in context_for(trace).history] == list(range(1, i + 1))
 
 
-def test_agent_crash_is_a_failed_attempt_not_a_failed_episode(tmp_path):
+def test_agent_crash_is_a_failed_attempt_not_a_failed_episode(tmp_path, stub_prompts):
     task = make_task(str(tmp_path))
 
     def crashes_on_roots(prompt, *, cwd, target):

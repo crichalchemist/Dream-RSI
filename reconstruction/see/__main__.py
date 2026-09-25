@@ -54,9 +54,10 @@ def cmd_sweep(a):
 
 
 def cmd_demo(a):
-    from see.loop import DreamRSI, LoopConfig
+    from see.loop import DreamRSI, LoopConfig, install_signal_handlers
     from see.toy import ScriptedDiscoveryAgent, ScriptedPolicyAgent, make_task
 
+    install_signal_handlers()  # SIGTERM freezes and refuses like Ctrl-C
     cfg = LoopConfig(
         workdir=a.workdir,
         iterations=a.iterations,

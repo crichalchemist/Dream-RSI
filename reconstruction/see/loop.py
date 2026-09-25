@@ -26,12 +26,13 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
 from collections.abc import Callable
 
-from see.live import LiveQuestion, TaskSpec, oriented_score
+from see.live import LiveQuestion, TaskSpec, kill_process_group, oriented_score
 from see.loader import load_policy
 from see.objective import DEFAULT_BETAS, DEFAULT_LAMBDA, score_of, validate_plan
 from see.policy.api import GridPlanningContext
@@ -39,6 +40,26 @@ from see.prompts import policy_improvement_prompt
 
 PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASELINE_POLICY = os.path.join(PKG_ROOT, "see", "policies", "parallel_refine.py")
+
+
+def archive_name(round_no: int, t: int, m: int) -> str:
+    """The policy_dev/history/ entry for version m of iteration t; rounds are numbered globally."""
+    return f"r{round_no:04d}_t{t:02d}_m{m}"
+
+
+def install_signal_handlers() -> None:
+    """Make SIGTERM and SIGHUP take the same path as Ctrl-C: raise KeyboardInterrupt in the main
+    thread. A SIGHUP that was inherited ignored (a nohup launch) stays ignored.
+
+    Called by the CLI entry points only; a library must not change signal disposition on import.
+    """
+    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+    if signal.getsignal(signal.SIGHUP) != signal.SIG_IGN:
+        signal.signal(signal.SIGHUP, _raise_keyboard_interrupt)
+
+
+def _raise_keyboard_interrupt(signum, frame):
+    raise KeyboardInterrupt(f"signal {signum}")
 
 
 @dataclasses.dataclass
@@ -57,6 +78,7 @@ class LoopConfig:
     beta2: float = 0.0
     objective: str = "pareto"  # "pareto" (Listing 2) or "eq1" (Sec. 3)
     sweep_timeout: float = 1800.0
+    kill_grace: float = 5.0  # seconds between SIGTERM and SIGKILL for the sweep subprocess
     initial_policy: str = BASELINE_POLICY  # pi_1: the paper starts from parallel refine
     serialize_eval: bool = True
 
@@ -131,16 +153,23 @@ class DreamRSI:
         """Stage 1: the deployed policy drives discovery; the tree is frozen into the pool."""
         run_dir = os.path.join(self.w, "runs", f"iter{t:04d}")
         out = os.path.join(self.pool, f"iter{t:04d}")
-        for partial in (run_dir, out):  # runs/ is created first, trace_pool/ last
-            if os.path.exists(partial):
-                raise RuntimeError(
-                    f"{partial} exists: iteration {t} was interrupted or already ran; "
-                    "delete it, do not merge into it"
-                )
+        # runs/ is created first and trace_pool/ last; the first archive is what a restart's
+        # offline() would recreate, because the round counter is persisted only on success
+        first_archive = os.path.join(self.dev_history, archive_name(self.state["round"] + 1, t, 0))
+        existing = [p for p in (run_dir, out, first_archive) if os.path.exists(p)]
+        if existing:
+            one = len(existing) == 1
+            raise RuntimeError(
+                f"{' and '.join(existing)} {'exists' if one else 'exist'}: iteration {t} was "
+                f"interrupted or already ran; delete {'it' if one else 'them'}, do not merge into "
+                f"{'it' if one else 'them'}"
+            )
         policy = load_policy(self.state["deployed"])(None)  # baked-in default beta
         ctx = self._context(self.manifests())
         plan = validate_plan(policy.plan_grid(ctx), ctx)
         grid = (plan.branch_count, plan.refine_count) if plan else tuple(self.c.fallback_grid)
+        # before runs/iterNNNN exists: an interrupt here leaves nothing to clean up
+        baseline = self.baseline_score()
         tree, history = os.path.join(run_dir, "tree"), os.path.join(run_dir, "history")
         os.makedirs(tree, exist_ok=True)
         os.makedirs(history, exist_ok=True)
@@ -153,7 +182,7 @@ class DreamRSI:
             self.discovery_agent,
             tree,
             history,
-            self.baseline_score(),
+            baseline,
             self.c.max_parallelism,
             grid[0],
             grid[1],
@@ -166,7 +195,28 @@ class DreamRSI:
             policy.solve(q, budget=None)
         except Exception as e:  # keep what was collected
             error = f"{type(e).__name__}: {e}"
-        manifest = {
+        except BaseException as e:  # an interrupt: freeze under runs/, never into the pool
+            partial = os.path.join(run_dir, "partial")
+            os.makedirs(partial, exist_ok=True)
+            error = f"{type(e).__name__}: {e}"
+            manifest = self._manifest(t, policy, plan, grid, q, error, started)
+            manifest["partial"] = True
+            self._freeze(
+                q, partial, f"iter{t:04d}-partial", {"iteration": t, "partial": True}, manifest
+            )
+            raise
+        manifest = self._manifest(t, policy, plan, grid, q, error, started)
+        os.makedirs(out)
+        self._freeze(q, out, f"iter{t:04d}", {"iteration": t}, manifest)
+        current = os.path.join(self.pool, "_current")
+        if os.path.lexists(current):
+            os.remove(current)
+        os.symlink(f"iter{t:04d}", current)
+        self.state["log"].append({"iteration": t, "live": manifest})
+        return manifest
+
+    def _manifest(self, t, policy, plan, grid, q: LiveQuestion, error, started) -> dict:
+        return {
             "iteration": t,
             "policy_round": self.state.get("deployed_round", "initial"),
             "beta": getattr(policy, "beta", None),
@@ -178,19 +228,15 @@ class DreamRSI:
             "started": started,
             "finished": time.time(),
         }
-        os.makedirs(out)
-        q.frozen(f"iter{t:04d}", {"iteration": t}).save(os.path.join(out, "trace.json"))
-        with open(os.path.join(out, "live_episode.jsonl"), "w") as f:
+
+    @staticmethod
+    def _freeze(q: LiveQuestion, into: str, trace_id: str, info: dict, manifest: dict) -> None:
+        q.frozen(trace_id, info).save(os.path.join(into, "trace.json"))
+        with open(os.path.join(into, "live_episode.jsonl"), "w") as f:
             for step in q.episode:
                 f.write(json.dumps(step) + "\n")
-        with open(os.path.join(out, "live_cycle_manifest.json"), "w") as f:
+        with open(os.path.join(into, "live_cycle_manifest.json"), "w") as f:
             json.dump(manifest, f, indent=1)
-        current = os.path.join(self.pool, "_current")
-        if os.path.lexists(current):
-            os.remove(current)
-        os.symlink(f"iter{t:04d}", current)
-        self.state["log"].append({"iteration": t, "live": manifest})
-        return manifest
 
     def offline(self, t: int) -> str:
         """Stages 2-3: evaluate M versions by replay over H_t and deploy the argmax."""
@@ -236,7 +282,7 @@ class DreamRSI:
 
     def _archive(self, method_path: str, t: int, m: int, agent_run=None) -> dict:
         self.state["round"] += 1
-        name = f"r{self.state['round']:04d}_t{t:02d}_m{m}"
+        name = archive_name(self.state["round"], t, m)
         rdir = os.path.join(self.dev_history, name)
         os.makedirs(rdir, exist_ok=True)
         archived = os.path.join(rdir, "method.py")
@@ -290,12 +336,23 @@ class DreamRSI:
         if self.c.max_replay_rounds is not None:
             cmd += ["--max-rounds", str(self.c.max_replay_rounds)]
         report_path = os.path.join(out, "beta_sweep.json")
+        p = subprocess.Popen(
+            cmd,
+            cwd=PKG_ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="replace",
+            start_new_session=True,  # a timeout or an interrupt kills what the policy code forked
+        )
         try:
-            p = subprocess.run(
-                cmd, cwd=PKG_ROOT, capture_output=True, text=True, timeout=self.c.sweep_timeout
-            )
+            try:
+                _, err = p.communicate(timeout=self.c.sweep_timeout)
+            except subprocess.TimeoutExpired:
+                kill_process_group(p, self.c.kill_grace)
+                raise RuntimeError(f"sweep timed out after {self.c.sweep_timeout}s") from None
             if p.returncode != 0 or not os.path.exists(report_path):
-                raise RuntimeError(p.stderr[-2000:] or f"exit {p.returncode}")
+                raise RuntimeError(err[-2000:] or f"exit {p.returncode}")
             with open(report_path) as f:
                 return json.load(f)
         except Exception as e:
@@ -308,3 +365,6 @@ class DreamRSI:
             with open(report_path, "w") as f:
                 json.dump(report, f, indent=1)
             return report
+        finally:
+            if p.poll() is None:  # an interrupt escaped communicate(): take the child with us
+                kill_process_group(p, self.c.kill_grace)

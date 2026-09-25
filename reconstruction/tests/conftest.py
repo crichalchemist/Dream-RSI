@@ -1,5 +1,8 @@
 """Shared test fixtures for reconstruction/tests."""
 
+import os
+import time
+
 import pytest
 
 from see import prompts
@@ -33,3 +36,24 @@ def stub_prompts(tmp_path_factory):
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(prompts, "GENERATED", str(directory))
         yield
+
+
+@pytest.fixture
+def process_gone():
+    """``process_gone(pid)``: True once no process with that pid exists, polling up to 2 s.
+
+    The shell stand-ins in tests/test_command_agent.py and the hanging sweep in
+    tests/test_loop.py fork a ``sleep``; the tests assert that grandchild is dead.
+    """
+
+    def gone(pid: int, seconds: float = 2.0) -> bool:
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            time.sleep(0.02)
+        return False
+
+    return gone

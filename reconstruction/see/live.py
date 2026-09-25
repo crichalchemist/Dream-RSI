@@ -18,6 +18,7 @@ import json
 import numbers
 import os
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -49,36 +50,122 @@ class TaskSpec:
     higher_is_better: bool = True  # Sec. 3 wants larger = better; flip e.g. autocorrelation
 
 
-class CommandAgent:
-    """Run a coding-agent CLI; ``{prompt}`` in the argv template is replaced."""
+def kill_process_group(p: subprocess.Popen, grace: float) -> None:
+    """End ``p``'s whole process group: SIGTERM, then SIGKILL after ``grace`` seconds.
 
-    def __init__(self, argv, timeout: float = 3600.0, env: dict | None = None):
+    ``p`` must have been started with ``start_new_session=True``, so its pid is the group id.
+    Members that outlive ``p`` (a CLI that exits and leaves a background process holding its
+    pipes) are still in the group, so both signals go to the group whether or not ``p`` is
+    still running; a group that is already gone is not an error.
+    """
+    _signal_group(p.pid, signal.SIGTERM)
+    try:
+        p.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        pass
+    _signal_group(p.pid, signal.SIGKILL)  # whatever ignored SIGTERM, including survivors of p
+    p.wait()
+
+
+def _signal_group(pgid: int, sig: int) -> None:
+    try:
+        os.killpg(pgid, sig)
+    except ProcessLookupError:  # nothing left in the group
+        pass
+
+
+class CommandAgent:
+    """Run a coding-agent CLI; ``{prompt}`` in the argv template is replaced.
+
+    Every call runs in its own session, so a timeout kills the CLI together with
+    everything it forked, not just the CLI.
+    """
+
+    def __init__(
+        self, argv, timeout: float = 3600.0, env: dict | None = None, kill_grace: float = 5.0
+    ):
         self.argv = list(AGENT_PRESETS.get(argv, argv) if isinstance(argv, str) else argv)
         self.timeout = timeout
         self.env = env
+        self.kill_grace = kill_grace  # seconds between SIGTERM and SIGKILL
+        self._live: set[subprocess.Popen] = set()
+        self._lock = threading.Lock()
+        self._closed = False  # set by terminate(); a closed agent never spawns again
 
     def __call__(self, prompt: str, *, cwd: str, target: str) -> dict:
         argv = [prompt if a == "{prompt}" else a for a in self.argv]
-        try:
-            p = subprocess.run(
+        with self._lock:  # spawning under the lock closes the race with terminate()
+            if self._closed:
+                return self._terminated()
+            p = subprocess.Popen(
                 argv,
                 cwd=cwd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=self.timeout,
+                errors="replace",
                 env={**os.environ, **(self.env or {})},
+                start_new_session=True,
             )
-            return {
-                "returncode": p.returncode,
-                "stdout": p.stdout[-4000:],
-                "stderr": p.stderr[-4000:],
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "returncode": None,
-                "stdout": "",
-                "stderr": f"agent timed out after {self.timeout}s",
-            }
+            self._live.add(p)
+        try:
+            deadline = time.monotonic() + self.timeout
+            while True:  # wait in slices, so a claimed call notices terminate() within a second
+                remaining = max(0.0, deadline - time.monotonic())
+                try:
+                    out, err = p.communicate(timeout=min(1.0, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() >= deadline:
+                        kill_process_group(p, self.kill_grace)
+                        self._close_pipes(p)
+                        return {
+                            "returncode": None,
+                            "stdout": "",
+                            "stderr": f"agent timed out after {self.timeout}s",
+                            "timed_out": True,
+                        }
+                    with self._lock:
+                        claimed = p not in self._live
+                    if claimed:
+                        # terminate() killed the group; a descendant outside it may hold the pipes
+                        self._close_pipes(p)
+                        return self._terminated()
+            with self._lock:  # terminate() claims a running call by removing it from _live
+                if p not in self._live:
+                    return self._terminated()
+                self._live.discard(p)
+            return {"returncode": p.returncode, "stdout": out[-4000:], "stderr": err[-4000:]}
+        finally:
+            if p.poll() is None:  # an exception escaped communicate(): take the group with us
+                kill_process_group(p, self.kill_grace)
+                self._close_pipes(p)
+            with self._lock:
+                self._live.discard(p)
+
+    @staticmethod
+    def _terminated() -> dict:
+        return {"returncode": None, "stdout": "", "stderr": "agent terminated"}
+
+    def terminate(self) -> None:
+        """Kill every call still running (whole process groups) and refuse every later call.
+
+        A running call is claimed by removing it from ``_live`` under the lock, so a call whose
+        process had already finished keeps its real result.
+        """
+        with self._lock:
+            self._closed = True
+            claimed = {p for p in self._live if p.poll() is None}
+            self._live -= claimed
+        for p in claimed:
+            kill_process_group(p, self.kill_grace)
+
+    @staticmethod
+    def _close_pipes(p: subprocess.Popen) -> None:
+        """Drop what a killed group left in its pipes; reading them could block on a survivor."""
+        for pipe in (p.stdout, p.stderr):
+            if pipe is not None:
+                pipe.close()
 
 
 def oriented_score(task: TaskSpec, result: dict) -> float:
@@ -118,6 +205,7 @@ class LiveQuestion(Question):
         self._eval_lock = threading.Lock() if serialize_eval else None
         self.cells = {}
         self._next_seq = 0
+        self._interrupted = threading.Event()  # set once an interrupt has cancelled a batch
         super().__init__(
             baseline_score,
             max_parallelism,
@@ -157,13 +245,29 @@ class LiveQuestion(Question):
             jobs.append((m, self._next_seq, self._direction(m.branch)))
             self._next_seq += 1
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_parallelism) as pool:
-            cells = list(pool.map(lambda job: self._run_attempt(*job), jobs))
+            futures = [pool.submit(self._run_attempt, *job) for job in jobs]
+            try:
+                for f in concurrent.futures.as_completed(futures):
+                    f.result()  # surfaces a worker's exception as soon as it happens
+            except BaseException as e:
+                if not isinstance(e, Exception):  # an interrupt, not a worker bug
+                    self._cancel(pool)
+                raise
+            cells = [f.result() for f in futures]
         out = []
         for cell in cells:
             self.cells[cell.id] = cell
             parent = self.cells.get(cell.parent_id) if cell.parent_id else None
             out.append(observation_for(cell, parent, self.baseline_score))
         return out
+
+    def _cancel(self, pool: concurrent.futures.ThreadPoolExecutor) -> None:
+        """Stop the batch: queued attempts never start and running agents are killed."""
+        self._interrupted.set()
+        pool.shutdown(wait=False, cancel_futures=True)
+        terminate = getattr(self.agent, "terminate", None)
+        if callable(terminate):
+            terminate()
 
     def _resume_from(self, branch: int, attempt: int) -> str:
         """The parent's saved program; past an attempt that left none, the nearest ancestor's."""
@@ -174,6 +278,8 @@ class LiveQuestion(Question):
         return os.path.join(self.task.baseline_dir, self.task.eval_program)
 
     def _run_attempt(self, meta: CellMeta, seq: int, direction: str) -> Cell:
+        if self._interrupted.is_set():  # the batch was cancelled before this attempt started
+            raise RuntimeError(f"attempt b{meta.branch}a{meta.attempt} cancelled by an interrupt")
         t = self.task
         node = os.path.join(self.tree_dir, node_dirname(meta.branch, meta.attempt))
         os.makedirs(node, exist_ok=True)
@@ -196,6 +302,8 @@ class LiveQuestion(Question):
             run = {"returncode": None, "stderr": f"{type(e).__name__}: {e}"}
             if os.path.exists(program):
                 os.remove(program)
+        if self._interrupted.is_set():  # _cancel killed the agent: do not evaluate what it left
+            raise RuntimeError(f"attempt b{meta.branch}a{meta.attempt} killed by an interrupt")
         if not os.path.exists(program):
             result = {
                 "combined_score": 0.0,
@@ -215,6 +323,7 @@ class LiveQuestion(Question):
                     "fail_class": fail_class,
                     "seconds": time.time() - started,
                     "agent_returncode": run.get("returncode") if run else None,
+                    "agent_timed_out": bool(run.get("timed_out")) if run else False,
                 },
                 f,
                 indent=1,

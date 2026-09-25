@@ -1,15 +1,19 @@
+import dataclasses
 import hashlib
 import json
 import os
+import signal
+import time
 
 import pytest
 
 from see.live import LiveQuestion
 from see.loader import load_policy
-from see.loop import DreamRSI, LoopConfig
+from see.loop import DreamRSI, LoopConfig, archive_name, install_signal_handlers
 from see.objective import run_episode
 from see.pool import context_factory, load_pool
-from see.toy import ScriptedDiscoveryAgent, ScriptedPolicyAgent, make_task
+from see.toy import ScriptedDiscoveryAgent, ScriptedPolicyAgent, evaluate, make_task
+from see.world import Trace
 
 
 @pytest.fixture(scope="module")
@@ -305,3 +309,140 @@ def test_tampered_candidate_is_not_deployed(tmp_path, stub_prompts):
         loop._deploy(1, record)
     assert {n: _sha256(os.path.join(deployed_dir, n)) for n in os.listdir(deployed_dir)} == before
     assert json.dumps(loop.state) == state_before
+
+
+def test_interrupt_freezes_the_partial_tree_under_runs_not_the_pool(tmp_path, stub_prompts):
+    """What an interrupted iteration collected is a readable trace under runs/, and the pool
+    never sees it."""
+    loop = _interruptible_loop(str(tmp_path), _RecordingAgent(interrupt_on=2))
+    state = (tmp_path / "state.json").read_text()
+    with pytest.raises(_Interrupted):
+        loop.online(1)
+    partial = tmp_path / "runs" / "iter0001" / "partial"
+    trace = Trace.load(str(partial / "trace.json"))
+    assert trace.trace_id == "iter0001-partial"
+    assert trace.info == {"iteration": 1, "partial": True}
+    assert sorted(trace.cells) == ["b0a0"]  # only the cell completed before the interrupt
+    assert trace.grid == (2, 1)
+    with open(partial / "live_cycle_manifest.json") as f:
+        manifest = json.load(f)
+    assert manifest["error"] == "_Interrupted: killed while attempt_b000_a001 was running"
+    assert manifest["partial"] is True
+    assert manifest["probes"] == 1
+    assert manifest["effective_grid"] == {"branch_count": 2, "refine_count": 1}
+    with open(partial / "live_episode.jsonl") as f:
+        assert len(f.readlines()) == 1  # the one round that completed
+    assert os.listdir(tmp_path / "trace_pool") == []
+    assert (tmp_path / "state.json").read_text() == state
+
+
+def test_sweep_timeout_kills_the_subprocess_group_and_scores_invalid(tmp_path, process_gone):
+    """A replay subprocess that hangs is killed with everything it forked, and the version
+    scores invalid exactly as a crashed one does."""
+    work = str(tmp_path)
+    cfg = LoopConfig(workdir=work, sweep_timeout=1.0, kill_grace=0.2)
+    loop = DreamRSI(cfg, make_task(work), ScriptedDiscoveryAgent(), ScriptedPolicyAgent())
+    rdir = tmp_path / "hang"
+    rdir.mkdir()
+    pid_file = rdir / "child.pid"
+    method = rdir / "method.py"
+    method.write_text(  # importing this "policy" forks a sleep, records its pid, then hangs
+        "import subprocess, time\n"
+        f"open({str(pid_file)!r}, 'w').write(str(subprocess.Popen(['sleep', '30']).pid))\n"
+        "time.sleep(30)\n"
+    )
+    started = time.time()
+    report = loop._sweep(str(method), str(rdir))
+    assert time.time() - started < 4.0
+    assert report["valid"] is False
+    assert report["errors"] == ["RuntimeError: sweep timed out after 1.0s"]
+    assert report["pareto"]["reward"] == float("-inf")
+    assert process_gone(int(pid_file.read_text()))
+    with open(rdir / "proposal_results" / "beta_sweep.json") as f:
+        assert json.load(f)["valid"] is False
+
+
+def test_restart_refuses_when_the_first_archive_dir_exists(tmp_path, stub_prompts):
+    """A crash in offline() leaves state["round"] unsaved, so a restart would recreate and
+    overwrite r{round+1}_tNN_m0; the guard refuses first, naming every leftover at once."""
+    agent = _RecordingAgent()
+    loop = _interruptible_loop(str(tmp_path), agent)
+    archive = tmp_path / "policy_dev" / "history" / archive_name(1, 1, 0)
+    assert archive.name == "r0001_t01_m0"  # the name _archive gives iteration 1's version 0
+    archive.mkdir(parents=True)
+    (archive / "method.py").write_text("# archived by the crashed run\n")
+    state = (tmp_path / "state.json").read_text()
+    assert json.loads(state)["round"] == 0
+    with pytest.raises(
+        RuntimeError, match=r"history/r0001_t01_m0 exists: .*delete it, do not merge into it"
+    ):
+        loop.online(1)
+    assert agent.targets == []
+    (tmp_path / "runs" / "iter0001").mkdir()
+    (tmp_path / "trace_pool" / "iter0001").mkdir()
+    with pytest.raises(
+        RuntimeError,
+        match=r"runs/iter0001 and .*trace_pool/iter0001 and .*r0001_t01_m0 exist: .*delete them",
+    ):
+        loop.online(1)
+    assert (archive / "method.py").read_text() == "# archived by the crashed run\n"
+    assert (tmp_path / "state.json").read_text() == state
+
+
+def test_sigterm_takes_the_same_path_as_ctrl_c():
+    """`kill <pid>` raises KeyboardInterrupt in the main thread, so a run freezes its partial
+    tree and refuses on restart like Ctrl-C does, instead of exiting at once."""
+    previous = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        install_signal_handlers()
+        with pytest.raises(KeyboardInterrupt, match=r"signal 15"):
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(0.5)  # the handler runs at the next bytecode boundary
+    finally:
+        for s, handler in previous.items():
+            signal.signal(s, handler)
+
+
+def test_sighup_takes_the_same_path_as_ctrl_c_unless_inherited_ignored():
+    """A hangup (the terminal or SSH session going away) freezes and refuses like Ctrl-C, since
+    the agents and the sweep run in their own sessions and never see the hangup themselves; a run
+    launched under nohup, which ignores SIGHUP, keeps ignoring it."""
+    previous = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        signal.signal(signal.SIGHUP, signal.SIG_DFL)
+        install_signal_handlers()
+        with pytest.raises(KeyboardInterrupt, match=r"signal 1$"):
+            os.kill(os.getpid(), signal.SIGHUP)
+            time.sleep(0.5)  # the handler runs at the next bytecode boundary
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        install_signal_handlers()
+        assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
+    finally:
+        for s, handler in previous.items():
+            signal.signal(s, handler)
+
+
+def test_interrupt_during_the_baseline_evaluation_leaves_nothing_under_runs(tmp_path, stub_prompts):
+    """An interrupt before the first attempt (here: during the baseline evaluation on a fresh
+    workdir) leaves no runs/iterNNNN at all, so a restart needs no cleanup and is not refused."""
+    work = str(tmp_path)
+    calls: list = []
+
+    def interrupting_evaluate(path):
+        calls.append(path)
+        if len(calls) == 1:
+            raise _Interrupted("killed during the baseline evaluation")
+        return evaluate(path)
+
+    cfg = LoopConfig(workdir=work, max_parallelism=1, fallback_grid=(2, 1), hard_max_grid=(2, 1))
+    task = dataclasses.replace(make_task(work), evaluate=interrupting_evaluate)
+    agent = _RecordingAgent()
+    loop = DreamRSI(cfg, task, agent, ScriptedPolicyAgent())
+    state = (tmp_path / "state.json").read_text()
+    with pytest.raises(_Interrupted):
+        loop.online(1)
+    assert os.listdir(tmp_path / "runs") == []
+    assert not (tmp_path / "baseline_eval.json").exists()
+    assert agent.targets == []
+    assert (tmp_path / "state.json").read_text() == state
+    assert loop.online(1)["probes"] == 4  # the restart runs the whole 2 x (1 + 1) grid

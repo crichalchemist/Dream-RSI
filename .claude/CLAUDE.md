@@ -24,14 +24,15 @@ pip install -e ".[extract,lasso,dev]" # lasso: pyright needs numpy/scikit-learn 
 pre-commit install                    # once per clone; ruff, ruff-format, pyright run on every commit
 python tools/extract_listings.py      # PREREQUISITE: writes generated/ (2 prompts + Lasso solver)
 python tools/extract_listings.py --check   # digest drift vs tools/generated.sha256; exit 1 on drift
-python -m pytest -q                   # 47 tests, ~3s
+python -m pytest -q                   # whole suite, ~4s; exact count pinned in .github/workflows/ci.yml
 python -m pytest -q tests/test_loop.py::test_on_policy_replay_reproduces_the_live_episode
 python -m see demo --workdir /tmp/drsi                                          # whole loop, toy task, ~8s
 python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tmp/sweep
 ```
 
-- Without `generated/`, `see demo` and `see/prompts.py` raise `FileNotFoundError` and 5 tests in
-  `tests/test_loop.py` skip (42 passed, 5 skipped instead of 47 passed).
+- Without `generated/`, `see demo` and `see/prompts.py` raise `FileNotFoundError`; the test suite
+  no longer depends on it (`tests/conftest.py`'s `stub_prompts` fixture stands in for the real
+  prompts).
 - Use the venv. The system interpreter on this machine has a broken global pytest plugin
   (langsmith) that crashes collection; if you must run pytest outside the venv, prefix
   `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`.
@@ -50,8 +51,9 @@ python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tm
 2. `offline(t)`: build M policy versions (`LoopConfig.versions`; version 0 is the current policy,
    so the deployed policy never regresses on the pool). The policy-development agent edits
    `policy_dev/method.py`; each version is replay-scored over every tree in the pool in a
-   subprocess with a timeout (crash or illegal batch scores −∞); the argmax is copied to
-   `deployed/iterNNNN.py` and `state.json` is updated.
+   subprocess with a timeout (crash or illegal batch scores −∞); the argmax's sha256 is
+   re-verified against the bytes that were scored, then copied to `deployed/iterNNNN.py`;
+   `state.json` records the deployed digest beside the score.
 
 Workdir layout is documented in the `see/loop.py` module docstring; the directory names are the
 ones the paper's Listing 2 prompt quotes, so do not rename them.
@@ -92,5 +94,6 @@ prompts from `generated/`, which is why extraction is a prerequisite.
 - `LoopConfig.serialize_eval=True` by default: evaluations are serialized because timing-based
   tasks interfere with each other. Do not parallelize evaluation for Lasso or kernel tasks.
 - An interrupted iteration cannot be resumed: `online()` raises if `runs/iterNNNN/` already
-  exists. Delete the partial directory, do not merge into it.
+  exists. Delete the partial `runs/iterNNNN/` (and the matching `trace_pool/` entry if present),
+  do not merge into it.
 - `*.local.md` files are private maintainer notes and are gitignored.

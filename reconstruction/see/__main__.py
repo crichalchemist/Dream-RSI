@@ -1,6 +1,7 @@
 """Command line: ``python -m see sweep|demo ...`` (run from reconstruction/)."""
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -12,6 +13,8 @@ def cmd_sweep(a):
     from see.loader import load_policy, overrides_plan_grid
     from see.pool import context_factory, load_pool
 
+    with open(a.method, "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()  # before loading runs the code
     cls = load_policy(a.method)
     pool = load_pool(a.pool)
     if not pool:
@@ -28,6 +31,7 @@ def cmd_sweep(a):
     )
     report["plan_grid_override"] = overrides_plan_grid(cls)
     report["method"] = os.path.abspath(a.method)
+    report["sha256"] = digest
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "beta_sweep.json"), "w") as f:
         json.dump(report, f, indent=1)
@@ -85,7 +89,7 @@ def main(argv=None):
     s.add_argument("--beta2", type=float, default=0.0)
     s.add_argument("--max-rounds", type=int, default=None)
     s.add_argument("--fallback", type=int, nargs=2, default=(10, 10))
-    s.add_argument("--hard-max", type=int, nargs=2, default=(32, 30))
+    s.add_argument("--hard-max", type=int, nargs=2, default=(32, 19))
     s.set_defaults(func=cmd_sweep)
     d = sub.add_parser("demo", help="run the whole loop on the toy task with scripted agents")
     d.add_argument("--workdir", required=True)

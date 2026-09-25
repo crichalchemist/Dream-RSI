@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 
@@ -10,18 +11,9 @@ from see.objective import run_episode
 from see.pool import context_factory, load_pool
 from see.toy import ScriptedDiscoveryAgent, ScriptedPolicyAgent, make_task
 
-pytestmark = pytest.mark.skipif(
-    not os.path.exists(
-        os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "generated", "policy_improvement_prompt.md"
-        )
-    ),
-    reason="run tools/extract_listings.py first (needs the paper's prompts)",
-)
-
 
 @pytest.fixture(scope="module")
-def finished_loop(tmp_path_factory):
+def finished_loop(tmp_path_factory, stub_prompts):
     work = str(tmp_path_factory.mktemp("loop"))
     cfg = LoopConfig(
         workdir=work,
@@ -94,7 +86,7 @@ def test_plan_contexts_only_see_earlier_cycles(finished_loop):
         assert [m["iteration"] for m in context_for(trace).history] == list(range(1, i + 1))
 
 
-def test_agent_crash_is_a_failed_attempt_not_a_failed_episode(tmp_path):
+def test_agent_crash_is_a_failed_attempt_not_a_failed_episode(tmp_path, stub_prompts):
     task = make_task(str(tmp_path))
 
     def crashes_on_roots(prompt, *, cwd, target):
@@ -123,3 +115,193 @@ def test_agent_crash_is_a_failed_attempt_not_a_failed_episode(tmp_path):
     obs = q.probe_batch(q.legal_actions())
     assert [o.fail_class for o in obs] == ["ok", "ok"] and obs[0].score == 1.0
     assert obs[0].delta_vs_parent is None  # the parent failed
+
+
+class _Interrupted(BaseException):
+    """Stands in for KeyboardInterrupt, which pytest intercepts itself."""
+
+
+class _RecordingAgent:
+    """The scripted discovery agent; records every call and dies on call ``interrupt_on``."""
+
+    def __init__(self, interrupt_on: int | None = None):
+        self.inner, self.interrupt_on = ScriptedDiscoveryAgent(seed=7), interrupt_on
+        self.targets: list[str] = []
+
+    def __call__(self, prompt: str, *, cwd: str, target: str) -> dict:
+        self.targets.append(os.path.basename(target))
+        if len(self.targets) == self.interrupt_on:
+            raise _Interrupted(f"killed while {self.targets[-1]} was running")
+        return self.inner(prompt, cwd=cwd, target=target)
+
+
+def _interruptible_loop(work: str, agent: _RecordingAgent) -> DreamRSI:
+    # one worker, so the agent's calls are serial: b0a0 first, then b0a1
+    cfg = LoopConfig(workdir=work, max_parallelism=1, fallback_grid=(2, 1), hard_max_grid=(2, 1))
+    return DreamRSI(cfg, make_task(work), agent, ScriptedPolicyAgent())
+
+
+def test_interrupted_iteration_is_refused_not_merged(tmp_path, stub_prompts):
+    """A partial runs/iterNNNN is never reused: online() refuses before any agent call."""
+    agent = _RecordingAgent()
+    loop = _interruptible_loop(str(tmp_path), agent)
+    run_dir = tmp_path / "runs" / "iter0001"
+    seeded = ("attempt_b000_a000", "attempt_b005_a000")  # inside and outside the 2 x 1 grid
+    for node in seeded:
+        (run_dir / "tree" / node).mkdir(parents=True)
+        (run_dir / "tree" / node / "proposal.md").write_text("left by the killed run\n")
+    state = (tmp_path / "state.json").read_text()
+    assert json.loads(state)["iteration"] == 0
+    with pytest.raises(RuntimeError, match=r"runs/iter0001 exists: .*delete it, do not merge"):
+        loop.online(1)
+    assert agent.targets == []
+    assert (tmp_path / "state.json").read_text() == state
+    assert not (tmp_path / "trace_pool" / "iter0001").exists()
+    assert os.listdir(run_dir) == ["tree"]
+    assert sorted(os.listdir(run_dir / "tree")) == list(seeded)
+    for node in seeded:
+        assert os.listdir(run_dir / "tree" / node) == ["proposal.md"]
+        assert (run_dir / "tree" / node / "proposal.md").read_text() == "left by the killed run\n"
+
+
+def test_interrupt_leaves_a_partial_run_that_a_restart_refuses(tmp_path, stub_prompts):
+    """An interrupt escapes online() mid-tree; restarting that iteration refuses, never merges."""
+    loop = _interruptible_loop(str(tmp_path), _RecordingAgent(interrupt_on=2))
+    state = (tmp_path / "state.json").read_text()
+    with pytest.raises(_Interrupted):
+        loop.online(1)
+    tree = tmp_path / "runs" / "iter0001" / "tree"
+    assert sorted(os.listdir(tree)) == ["attempt_b000_a000", "attempt_b000_a001"]
+    assert not (tmp_path / "trace_pool" / "iter0001").exists()
+    assert (tmp_path / "state.json").read_text() == state
+    restart_agent = _RecordingAgent()
+    restart = _interruptible_loop(str(tmp_path), restart_agent)
+    with pytest.raises(RuntimeError, match=r"runs/iter0001 exists: .*delete it, do not merge"):
+        restart.online(1)
+    assert restart_agent.targets == []
+    assert (tmp_path / "state.json").read_text() == state
+
+
+def test_one_malformed_evaluator_result_fails_one_cell_not_the_batch(tmp_path, stub_prompts):
+    """Garbage an evaluator returns (not raises) costs its own cell, not its siblings'."""
+    task = make_task(str(tmp_path))
+    real_evaluate = task.evaluate
+    malformed = {  # each of these used to abort the whole batch it was evaluated in
+        "attempt_b001_a000": {"combined_score": "n/a", "validity": 1.0},
+        "attempt_b001_a001": {"combined_score": 3.0, "error": 42},
+        "attempt_b000_a002": {"combined_score": 3.0, "error": []},  # falsy, but not a string
+        "attempt_b002_a002": {"error": None},  # combined_score missing entirely
+    }
+
+    def malformed_on_branch_1(path: str) -> dict:
+        node = os.path.basename(os.path.dirname(path))
+        return malformed[node] if node in malformed else real_evaluate(path)
+
+    task.evaluate = malformed_on_branch_1
+    xs = {
+        "attempt_b000_a000": 2.0,
+        "attempt_b001_a000": 3.0,
+        "attempt_b002_a000": 4.0,
+        "attempt_b000_a001": 5.0,
+        "attempt_b001_a001": 6.0,
+        "attempt_b002_a001": 7.0,
+        "attempt_b000_a002": 8.0,
+        "attempt_b001_a002": 9.0,
+        "attempt_b002_a002": 10.0,
+    }
+
+    def writes_a_distinct_program(prompt, *, cwd, target):
+        with open(os.path.join(target, task.eval_program), "w") as f:
+            json.dump({"x": xs[os.path.basename(target)]}, f)
+        return {"returncode": 0}
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    q = LiveQuestion(
+        task,
+        writes_a_distinct_program,
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=3,
+        branch_count=3,
+        refine_count=2,
+    )
+    obs = q.probe_batch(q.legal_roots())  # round 1: branch 1's score is not a number
+    assert [o.cell_id for o in obs] == ["b0a0", "b1a0", "b2a0"]
+    assert [(o.score, o.evaluated) for o in obs] == [(2.0, True), (0.0, False), (4.0, True)]
+    assert obs[0].fail_class == obs[2].fail_class == "ok"  # the siblings keep their results
+    assert obs[1].error is not None and "malformed evaluator result" in obs[1].error
+    assert "'n/a'" in obs[1].error  # the error names what was malformed
+    with open(tree / "attempt_b001_a000" / "eval" / "score.json") as f:
+        assert json.load(f)["evaluator_crashed"] is True
+    obs = q.probe_batch(q.legal_actions())  # round 2: branch 1's error is not a string
+    assert [o.cell_id for o in obs] == ["b0a1", "b1a1", "b2a1"]
+    assert [(o.score, o.evaluated) for o in obs] == [(5.0, True), (0.0, False), (7.0, True)]
+    assert obs[0].fail_class == obs[2].fail_class == "ok"
+    assert obs[1].error is not None and "'error': 42" in obs[1].error
+    obs = q.probe_batch(  # round 3: branch 0's error is falsy, branch 2's combined_score is missing
+        q.legal_actions()
+    )
+    assert [o.cell_id for o in obs] == ["b0a2", "b1a2", "b2a2"]
+    assert [(o.score, o.evaluated) for o in obs] == [(0.0, False), (9.0, True), (0.0, False)]
+    assert obs[1].fail_class == "ok"  # the well-formed sibling keeps its result
+    for i in (0, 2):
+        assert obs[i].error is not None
+        assert obs[i].error.startswith("ValueError: malformed evaluator result")
+    with open(tree / "attempt_b000_a002" / "eval" / "score.json") as f:
+        assert json.load(f)["evaluator_crashed"] is True
+    with open(tree / "attempt_b002_a002" / "eval" / "score.json") as f:
+        assert json.load(f)["evaluator_crashed"] is True
+    assert len(q.frozen("iter0001", {})) == 9  # every cell of all three rounds reaches the tree
+
+
+def _sha256(path: str) -> str:
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def test_deployed_policy_digest_matches_the_scored_candidate(finished_loop):
+    """Sec. 3's never-regress guarantee is about bytes: deploy exactly what was scored."""
+    w = finished_loop.w
+    with open(os.path.join(w, "state.json")) as f:
+        state = json.load(f)
+    for entry in state["log"]:
+        chosen = next(c for c in entry["offline"] if c["round"] == entry["selected"])
+        summary = os.path.join(
+            w, "policy_dev", "history", chosen["round"], "proposal_results", "beta_sweep.json"
+        )
+        with open(summary) as f:
+            swept = json.load(f)["sha256"]
+        deployed = os.path.join(w, "deployed", f"iter{entry['iteration'] + 1:04d}.py")
+        assert swept == chosen["sha256"] == _sha256(deployed)
+    assert state["deployed_sha256"] == _sha256(state["deployed"])
+
+
+def test_tampered_candidate_is_not_deployed(tmp_path, stub_prompts):
+    """A candidate whose file changed after it was scored is refused, not deployed."""
+    work = str(tmp_path)
+    cfg = LoopConfig(
+        workdir=work,
+        iterations=1,
+        versions=2,
+        max_parallelism=2,
+        fallback_grid=(2, 2),
+        hard_max_grid=(4, 4),
+        betas=(0.0, 1.0),
+    )
+    loop = DreamRSI(cfg, make_task(work), ScriptedDiscoveryAgent(seed=3), ScriptedPolicyAgent())
+    loop.online(1)
+    loop.offline(1)
+    entry = loop.state["log"][-1]
+    scored = next(c for c in entry["offline"] if c["round"] == entry["selected"])
+    record = {**scored, "method": os.path.join(loop.dev_history, scored["round"], "method.py")}
+    deployed_dir = os.path.join(work, "deployed")
+    before = {n: _sha256(os.path.join(deployed_dir, n)) for n in os.listdir(deployed_dir)}
+    state_before = json.dumps(loop.state)
+    with open(record["method"], "a") as f:
+        f.write("\n# edited after it was scored\n")
+    with pytest.raises(RuntimeError, match=r"changed after it was scored"):
+        loop._deploy(1, record)
+    assert {n: _sha256(os.path.join(deployed_dir, n)) for n in os.listdir(deployed_dir)} == before
+    assert json.dumps(loop.state) == state_before

@@ -15,12 +15,13 @@ import collections
 import concurrent.futures
 import dataclasses
 import json
+import numbers
 import os
 import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from see.policy.api import CellMeta
 from see.policy.observation_signal import classify_failure
@@ -240,7 +241,16 @@ class LiveQuestion(Question):
         lock = self._eval_lock or _NullLock()
         with lock:  # timing tasks (Lasso, kernels) are distorted by concurrent evaluation
             try:
-                return dict(self.task.evaluate(program))
+                result = self.task.evaluate(program)
+                # checked inside the guard: a bad result fails its own cell, not the whole batch
+                if not (
+                    isinstance(result, Mapping)
+                    and isinstance(result.get("combined_score"), numbers.Real)  # numpy scalars pass
+                    # absent, None, or a string; any other falsy value is still malformed
+                    and ((err := result.get("error")) is None or isinstance(err, str))
+                ):
+                    raise ValueError(f"malformed evaluator result: {repr(result)[:200]}")
+                return dict(result)
             except Exception as e:
                 return {
                     "combined_score": 0.0,

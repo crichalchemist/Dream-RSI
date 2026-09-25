@@ -65,6 +65,11 @@ Details: `tools/extract_listings.py`.
 | Concurrent evaluation | not discussed | serialised by default; parallel timing measurements of Lasso or kernels would interfere |
 | Policy-development agent | "a fixed LLM-based agent"; model not named | any CLI agent; revises the latest version |
 | Sandboxing LLM-written policy code | not discussed | replay sweep runs in a subprocess with a timeout; crashes score −∞ |
+| Interrupted iteration handling | not discussed | `online(t)` refuses when either `runs/iterNNNN` or `trace_pool/iterNNNN` already exists; the message names the directory and says to delete it, never merge into it — when both exist (a kill during `offline()`), `runs/` is checked first, so deleting only it surfaces the same refusal against `trace_pool/` on the next restart; full recovery also deletes the aborted iteration's `policy_dev/history/r*_tNN_m*` directories before restarting, since the round counter is persisted only on success and a restart would otherwise recreate and overwrite those archive names |
+| Rejected/absent grid plan in replay | Listing 2's fallback/hard caps (for the live runner); nothing about replay under a rejected plan | `run_episode` clips a rejected or absent plan to `context.fallback_branch_count`/`fallback_refine_count`, mirroring `online()`'s live substitution of `LoopConfig.fallback_grid`; neither path clips the fallback grid to the hard caps, and replay clips it only to the trace's own grid, flagging an oversize fallback `out_of_support=True` exactly as an explicit plan would be |
+| Malformed (non-raising) evaluator result | not discussed | one cell's malformed result — not a `Mapping`, a `combined_score` that isn't a `numbers.Real`, or an `error` that is neither absent, `None`, nor a `str` — is recorded as an unevaluated `evaluator_crashed` cell for that cell only; sibling cells in the same batch keep their real results; using `numbers.Real` lets NaN, ±inf and numpy scalar scores pass unchanged, but now fails a cell whose score is `np.bool_` or a 0-d array (no shipped evaluator produces either) |
+| Deploy-time code integrity | not discussed | the argmax candidate's sha256, computed when it was archived, before scoring, is re-verified against the file about to be copied to `deployed/iterNNNN.py`; a mismatch raises before the offline log is persisted, and since `run()` advances `state["iteration"]` only after `offline()` returns, a restart recomputes the same t; the run aborts with `runs/iterNNNN` and `trace_pool/iterNNNN` already written by the completed `online()` — the interrupted-iteration guard then refuses either, so recovery deletes both, and the aborted iteration's `policy_dev/history/r*_tNN_m*` directories, before restarting (the round counter is persisted only on success, so a restart would otherwise recreate and overwrite those archive names), then re-runs the whole iteration (a fresh online rollout and fresh offline candidates, not just a re-sweep); on success `state.json` records the deployed digest beside the score, absent until the first `offline()` completes |
+| `hard_max_grid` default | Listing 2 names `hard_max_branch_count`/`hard_max_refine_count` (the two per-dimension caps) but gives no values | lowered to `(32, 19)`, so `branch_count × (refine_count + 1) ≤ 640`, the paper's largest reported per-round budget; the two caps stay independent per-dimension bounds, matching Listing 2's own validation rule rather than adding an unspecified product cap |
 
 ## 4. Places where the paper contradicts itself
 
@@ -168,3 +173,16 @@ that noise without any estimate of it.
 - The unknowns in §3, above all which objective selected the deployed policies, plus
   λ, β, M and the direction provider. These determine what "Dream-RSI" means operationally.
 - KernelBench problem ids and a GPU for the kernel results.
+- Whether the trace-pool tamper window during `offline()` should close the same way
+  `policy_dev/history/` now does: `_archive`'s sha256 (§3 above) covers only the archived
+  `method.py`, not `trace_pool/iterNNNN/trace.json`, and `_sweep` (`see/loop.py:259-310`)
+  replay-scores every version directly against the whole pool with no digest on any frozen tree;
+  the sweep subprocess writes its own `sha256` of the method file into `beta_sweep.json`
+  (`see/__main__.py:17,34`), but `_archive`/`_deploy` never compare it to the archive digest, so
+  that the subprocess scored the archived bytes is inferred from ordering, not verified.
+- Whether the discovery agent's filesystem view is meant to extend past the shared-proposal
+  reading §4 item 4 already documents: `LiveQuestion._run_attempt` (`see/live.py:176`) runs the
+  agent with `cwd=self.tree_dir` (`:194`), so it can read every sibling `attempt_*` directory's
+  actual program and eval output — not just the proposals Listing 1 names. On an agent crash
+  (`:195-198`), only the crashed attempt's own program file is removed, so other files that
+  the crashed agent wrote stay visible to later sibling attempts.

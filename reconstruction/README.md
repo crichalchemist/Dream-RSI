@@ -14,7 +14,7 @@ that file before trusting any number this code produces.
 | Objectives: Eq. (1) and the beta-sweep `pareto.reward` | Sec. 3, Listing 2 | implemented; AUC/attainment details inferred |
 | Parallel-refine initial policy | Sec. 4 | implemented |
 | Online rollout: workspaces, parallel workers, agent + evaluator | Sec. 3, Listing 1 | implemented; tested with scripted agents and the real Lasso evaluator |
-| Outer loop: online, pool, M versions, argmax deploy | Sec. 3, Fig. 1 | implemented; tested end to end with scripted agents |
+| Outer loop: online, pool, M versions, argmax deploy | Sec. 3, Fig. 1 | implemented; tested end to end with scripted agents; replay ≡ live pinned across seeds and both policies; deploy integrity verified by digest |
 | Prompts (Listings 1, 2) and discovered Lasso solver (Listing 3) | appendix | regenerated from the PDF, verbatim |
 | Lasso and math tasks | SimpleTES | adapter (`see/tasks.py`) |
 | KernelBench tasks | KernelBench | no adapter |
@@ -33,7 +33,7 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[extract,lasso,dev]"
 pre-commit install
 python tools/extract_listings.py          # prerequisite: writes generated/ (2 prompts + the Lasso solver)
-python -m pytest -q                       # 47 tests; 5 of them skip while generated/ is missing
+python -m pytest -q                       # whole suite; exact count pinned in .github/workflows/ci.yml
 python -m see demo --workdir /tmp/drsi    # whole loop on a toy task, scripted agents
 ```
 

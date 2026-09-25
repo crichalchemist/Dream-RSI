@@ -34,7 +34,7 @@ def main(argv=None):
     ap.add_argument("--versions", type=int, default=4, help="M")
     ap.add_argument("--workers", type=int, default=10, help="W")
     ap.add_argument("--grid", type=int, nargs=2, default=(10, 10), help="fallback W R")
-    ap.add_argument("--hard-max", type=int, nargs=2, default=(32, 30))
+    ap.add_argument("--hard-max", type=int, nargs=2, default=(32, 19))
     ap.add_argument("--objective", choices=("pareto", "eq1"), default="pareto")
     a = ap.parse_args(argv)
     os.makedirs(a.workdir, exist_ok=True)

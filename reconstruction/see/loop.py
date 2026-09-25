@@ -34,7 +34,7 @@ from collections.abc import Callable
 
 from see.live import LiveQuestion, TaskSpec, kill_process_group, oriented_score
 from see.loader import load_policy
-from see.objective import DEFAULT_BETAS, DEFAULT_LAMBDA, score_of, validate_plan
+from see.objective import DEFAULT_BETAS, DEFAULT_LAMBDA, OBJECTIVES, score_of, validate_plan
 from see.policy.api import GridPlanningContext
 from see.prompts import policy_improvement_prompt
 
@@ -81,6 +81,10 @@ class LoopConfig:
     kill_grace: float = 5.0  # seconds between SIGTERM and SIGKILL for the sweep subprocess
     initial_policy: str = BASELINE_POLICY  # pi_1: the paper starts from parallel refine
     serialize_eval: bool = True
+
+    def __post_init__(self):
+        if self.objective not in OBJECTIVES:
+            raise ValueError(f"objective {self.objective!r} is not one of {OBJECTIVES}")
 
 
 class DreamRSI:

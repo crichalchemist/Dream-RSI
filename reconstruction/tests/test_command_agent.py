@@ -84,7 +84,9 @@ def test_agent_timeout_kills_the_whole_process_group(tmp_path, stub_prompts, pro
     assert len(pids) == 2 and all(process_gone(p) for p in pids)
 
 
-def test_a_timed_out_agent_that_left_a_broken_program_keeps_the_evaluators_verdict(tmp_path):
+def test_a_timed_out_agent_that_left_a_broken_program_keeps_the_evaluators_verdict(
+    tmp_path, stub_prompts
+):
     """When the evaluator itself rejects what a timed-out agent left, its error and class win:
     the program is broken either way, and score.json's agent_timed_out keeps the cause."""
     tree = tmp_path / "tree"

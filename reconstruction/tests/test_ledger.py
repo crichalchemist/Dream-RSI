@@ -81,11 +81,20 @@ def test_pareto_comes_from_the_beta_grid_and_eq1_from_the_default_beta_episode()
         assert p["attainment"] == pytest.approx(sum(e["attainment"] for e in mine) / 2)
 
 
+class _FailsAtBetaOne(_DefaultBeta045):
+    def solve(self, question, budget=None):
+        if self.beta == 1.0:
+            raise RuntimeError("only the grid episode at beta 1.0 fails")
+        return super().solve(question, budget)
+
+
 def test_an_error_in_either_episode_set_invalidates_both_objectives():
-    report, execs = beta_sweep(_FailsAtItsDefault, [synthetic_trace(0)], betas=(0.0, 1.0))
-    assert [bool(e["error"]) for e in execs] == [False, False, True]
-    assert not report["valid"]
-    assert report["pareto"]["reward"] == report["eq1"]["V"] == float("-inf")
+    cases = ((_FailsAtItsDefault, [False, False, True]), (_FailsAtBetaOne, [False, True, False]))
+    for policy_cls, failing in cases:
+        report, execs = beta_sweep(policy_cls, [synthetic_trace(0)], betas=(0.0, 1.0))
+        assert [bool(e["error"]) for e in execs] == failing
+        assert not report["valid"]
+        assert report["pareto"]["reward"] == report["eq1"]["V"] == float("-inf")
 
 
 def test_an_out_of_support_plan_is_flagged_and_scored_as_its_clipped_grid():

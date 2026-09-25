@@ -305,10 +305,11 @@ class Swallows(LLMDesignedMethod):
 
     def solve(self, question, budget=None):
         question.reset()
-        try:
-            question.probe_batch(question.legal_roots())
-        except Exception:
-            pass
+        for _ in range(2):  # keeps probing after the first batch is abandoned
+            try:
+                question.probe_batch(question.legal_roots()[: question.max_parallelism])
+            except Exception:
+                pass
         return finalize_result(question, SimResult())
 
     def plan_grid(self, context):
@@ -322,14 +323,15 @@ def test_a_fault_the_policy_swallows_still_reaches_the_manifest(
     """A policy that catches the batch's exception and returns cannot produce a clean-looking
     truncated cycle: the manifest names the fault, and the cycle is frozen with that error just
     as when the fault propagates. The fault here is a missing prompt file, raised in the worker
-    before any agent call."""
+    before any agent call; the policy then probes the remaining roots, and the manifest still
+    names the first fault, not the refusal of the second batch."""
     policy = tmp_path / "swallows.py"
     policy.write_text(SWALLOWS)
     cfg = LoopConfig(
         workdir=str(tmp_path),
         max_parallelism=2,
-        fallback_grid=(2, 1),
-        hard_max_grid=(2, 1),
+        fallback_grid=(4, 1),
+        hard_max_grid=(4, 1),
         initial_policy=str(policy),
     )
     agent = _RecordingAgent()

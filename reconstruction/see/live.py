@@ -58,13 +58,23 @@ def kill_process_group(p: subprocess.Popen, grace: float) -> None:
     pipes) are still in the group, so both signals go to the group whether or not ``p`` is
     still running; a group that is already gone is not an error.
     """
-    _signal_group(p.pid, signal.SIGTERM)
-    try:
-        p.wait(timeout=grace)
-    except subprocess.TimeoutExpired:
-        pass
-    _signal_group(p.pid, signal.SIGKILL)  # whatever ignored SIGTERM, including survivors of p
-    p.wait()
+    kill_process_groups([p], grace)
+
+
+def kill_process_groups(ps: list, grace: float) -> None:
+    """End every group in ``ps`` at once: SIGTERM to all, one shared ``grace``, SIGKILL to all."""
+    for p in ps:
+        _signal_group(p.pid, signal.SIGTERM)
+    deadline = time.monotonic() + grace
+    for p in ps:
+        try:
+            p.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            pass
+    for p in ps:
+        _signal_group(p.pid, signal.SIGKILL)  # whatever ignored SIGTERM, including survivors of p
+    for p in ps:
+        p.wait()
 
 
 def _signal_group(pgid: int, sig: int) -> None:
@@ -151,14 +161,14 @@ class CommandAgent:
         """Kill every call still running (whole process groups) and refuse every later call.
 
         A running call is claimed by removing it from ``_live`` under the lock, so a call whose
-        process had already finished keeps its real result.
+        process had already finished keeps its real result. The claimed groups share one
+        ``kill_grace``, so the cost of an interrupt does not grow with the batch width.
         """
         with self._lock:
             self._closed = True
-            claimed = {p for p in self._live if p.poll() is None}
-            self._live -= claimed
-        for p in claimed:
-            kill_process_group(p, self.kill_grace)
+            claimed = [p for p in self._live if p.poll() is None]
+            self._live.difference_update(claimed)
+        kill_process_groups(claimed, self.kill_grace)
 
     @staticmethod
     def _close_pipes(p: subprocess.Popen) -> None:

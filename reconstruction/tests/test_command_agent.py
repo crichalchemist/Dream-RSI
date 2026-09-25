@@ -166,6 +166,47 @@ def test_terminate_kills_live_agents_and_refuses_new_calls(tmp_path, process_gon
     agent.terminate()  # idempotent with nothing live
 
 
+# The stand-in with SIGTERM ignored; the sleep it forks inherits that (an ignored signal stays
+# ignored across exec), so only the SIGKILL after kill_grace ends either of them.
+TERM_PROOF_STAND_IN = [
+    "sh",
+    "-c",
+    'trap "" TERM; sleep 30 & echo $! > "$0/tmp-$$" && mv "$0/tmp-$$" "$0/child-$$.pid"; wait',
+    "{dir}",
+    "{prompt}",
+]
+
+
+def test_terminate_gives_every_live_group_one_shared_grace_period(tmp_path, process_gone):
+    """Three agents that ignore SIGTERM are SIGKILLed after one kill_grace, not one each: the
+    cost of an interrupt does not grow with the batch width."""
+    pid_dir = tmp_path / "pids"
+    pid_dir.mkdir()
+    argv = [str(pid_dir) if a == "{dir}" else a for a in TERM_PROOF_STAND_IN]
+    agent = CommandAgent(argv, timeout=10.0, kill_grace=0.5)
+    calls = [
+        threading.Thread(
+            target=lambda: agent("p", cwd=str(tmp_path), target=str(tmp_path)), daemon=True
+        )
+        for _ in range(3)
+    ]
+    for call in calls:
+        call.start()
+    deadline = time.time() + 5.0
+    while len(grandchild_pids(pid_dir)) < 3 and time.time() < deadline:
+        time.sleep(0.02)  # until every stand-in has forked its child
+    pids = grandchild_pids(pid_dir)
+    assert len(pids) == 3
+    started = time.time()
+    agent.terminate()
+    elapsed = time.time() - started
+    assert 0.5 <= elapsed < 1.2  # SIGTERM was ignored, and one grace period covered all three
+    for call in calls:
+        call.join(timeout=2.0)
+    assert not any(call.is_alive() for call in calls)
+    assert all(process_gone(pid) for pid in pids)
+
+
 def test_interrupt_kills_running_agents_and_records_nothing(tmp_path, stub_prompts, process_gone):
     """Every attempt in a batch is running when an interrupt lands in the main thread (as SIGINT
     does; probe_batch caps a batch at max_parallelism): both agents' children are killed, the

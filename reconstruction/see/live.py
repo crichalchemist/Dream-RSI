@@ -193,6 +193,7 @@ class LiveQuestion(Question):
         self._eval_lock = threading.Lock() if serialize_eval else None
         self.cells = {}
         self._next_seq = 0
+        self._interrupted = threading.Event()  # set once an interrupt has cancelled a batch
         super().__init__(
             baseline_score,
             max_parallelism,
@@ -232,13 +233,29 @@ class LiveQuestion(Question):
             jobs.append((m, self._next_seq, self._direction(m.branch)))
             self._next_seq += 1
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_parallelism) as pool:
-            cells = list(pool.map(lambda job: self._run_attempt(*job), jobs))
+            futures = [pool.submit(self._run_attempt, *job) for job in jobs]
+            try:
+                for f in concurrent.futures.as_completed(futures):
+                    f.result()  # surfaces a worker's exception as soon as it happens
+            except BaseException as e:
+                if not isinstance(e, Exception):  # an interrupt, not a worker bug
+                    self._cancel(pool)
+                raise
+            cells = [f.result() for f in futures]
         out = []
         for cell in cells:
             self.cells[cell.id] = cell
             parent = self.cells.get(cell.parent_id) if cell.parent_id else None
             out.append(observation_for(cell, parent, self.baseline_score))
         return out
+
+    def _cancel(self, pool: concurrent.futures.ThreadPoolExecutor) -> None:
+        """Stop the batch: queued attempts never start and running agents are killed."""
+        self._interrupted.set()
+        pool.shutdown(wait=False, cancel_futures=True)
+        terminate = getattr(self.agent, "terminate", None)
+        if callable(terminate):
+            terminate()
 
     def _resume_from(self, branch: int, attempt: int) -> str:
         """The parent's saved program; past an attempt that left none, the nearest ancestor's."""
@@ -249,6 +266,8 @@ class LiveQuestion(Question):
         return os.path.join(self.task.baseline_dir, self.task.eval_program)
 
     def _run_attempt(self, meta: CellMeta, seq: int, direction: str) -> Cell:
+        if self._interrupted.is_set():  # the batch was cancelled before this attempt started
+            raise RuntimeError(f"attempt b{meta.branch}a{meta.attempt} cancelled by an interrupt")
         t = self.task
         node = os.path.join(self.tree_dir, node_dirname(meta.branch, meta.attempt))
         os.makedirs(node, exist_ok=True)

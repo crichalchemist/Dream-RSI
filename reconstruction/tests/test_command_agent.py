@@ -5,6 +5,7 @@ API) and asserts that a timeout, terminate() or an interrupt kills the whole pro
 """
 
 import json
+import os
 import signal
 import sys
 import threading
@@ -152,3 +153,43 @@ def test_terminate_kills_live_agents_and_refuses_new_calls(tmp_path, process_gon
     }
     assert grandchild_pids(pid_dir) == [pid]  # the refused call forked nothing
     agent.terminate()  # idempotent with nothing live
+
+
+def test_interrupt_kills_running_agents_and_records_nothing(tmp_path, stub_prompts, process_gone):
+    """A batch is at most max_parallelism wide (probe_batch enforces it), so every attempt in it
+    is running when an interrupt lands in the main thread (as SIGINT does): both agents' children
+    are killed, nothing from the batch is recorded, and anything still queued in the pool is
+    cancelled."""
+    pid_dir = tmp_path / "pids"
+    pid_dir.mkdir()
+    agent = CommandAgent(stand_in(pid_dir), timeout=3.0, kill_grace=0.2)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    q = LiveQuestion(
+        make_task(str(tmp_path)),
+        agent,
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=2,
+        branch_count=2,
+        refine_count=0,
+    )
+
+    def interrupt(signum, frame):
+        raise _Interrupted("SIGALRM while two agents were running")
+
+    previous = signal.signal(signal.SIGALRM, interrupt)
+    signal.setitimer(signal.ITIMER_REAL, 0.5)  # both workers are inside communicate() by then
+    started = time.time()
+    try:
+        with pytest.raises(_Interrupted):
+            q.probe_batch(q.legal_roots())
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+    assert time.time() - started < 2.0  # not the 3 s timeout
+    pids = grandchild_pids(pid_dir)
+    assert len(pids) == 2 and all(process_gone(p) for p in pids)
+    assert q.cells == {}  # nothing from the interrupted batch is kept
+    assert sorted(os.listdir(tree)) == ["attempt_b000_a000", "attempt_b001_a000"]

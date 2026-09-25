@@ -41,6 +41,25 @@ python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tm
   with SimpleTES's evaluator; `scripts/run_dream_rsi.py` runs the loop with real coding agents and
   spends real API budget (~110 discovery calls per round at the paper's default grid).
 
+## Code navigation: Serena first
+
+Serena (MCP server, Python language server) indexes the repository; its paths are relative to the
+repo root (`reconstruction/see/live.py`). Reach for it before Grep or a whole-file Read whenever
+the question is about a symbol:
+
+- what a file defines, or where X is defined: `get_symbols_overview`, then `find_symbol`
+  (`include_body=True` for the code, `depth=1` for a class's methods)
+- who calls X, before changing a signature or anything public in `see/policy/`:
+  `find_referencing_symbols`
+- replacing or adding a function or method: `replace_symbol_body`, `insert_after_symbol`,
+  `insert_before_symbol`
+
+Keep Read/Edit for text that is not a symbol (Markdown, YAML, TOML, `GAPS.md` tables) and Grep for
+strings (error messages, file names, format strings). In Claude Code the tools are deferred: load
+them with ToolSearch (`select:mcp__serena__find_symbol,...`) before the first call, and tell
+subagents working on `see/`, `scripts/` or `tests/` the same. `.serena/` is tool state and is
+gitignored.
+
 ## Architecture
 
 **Outer loop** — `see/loop.py:DreamRSI.run` alternates two stages per iteration `t`:

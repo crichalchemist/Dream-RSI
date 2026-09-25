@@ -20,7 +20,8 @@ cycle. The spec's gate is kept in its intended order: evidence first, then chang
 **Decision (agents).** Discovery on the Gemini CLI (the paper's backbone family, with the
 Listing 1 prompt written for it; the account logged in on this machine), policy development on
 the Claude CLI (few calls; authenticated here). Both are the existing presets in
-`see/live.py:AGENT_PRESETS`.
+`see/live.py:AGENT_PRESETS`. (Amended while planning: both run isolated from the owner's global
+CLI configuration, passed as JSON argv; section 11.)
 
 **Decision (size).** Two iterations, a 4 x 3 fallback grid, 4 workers, 3 policy versions:
 about 32 to 46 discovery calls and 4 policy calls, one to two hours wall clock.
@@ -76,7 +77,8 @@ requirement (`port select` on macOS, `g++` on Linux), and the smoke test proves 
 budget is spent.
 
 **Smoke test.** `python scripts/verify_lasso.py --simpletes ../SimpleTES --repeats 2
---eigen-include /opt/local/include/eigen3` on this host, before the run: proves the toolchain
+--eigen-include /opt/local/include/eigen3 --json evidence/d2a-lasso/host.json` on this host, under
+the run's `PATH` and with the evaluator's binary cache cleared, before the run: proves the toolchain
 end to end (compile, 17 instances, the paper's Listing 3) and measures this host's evaluation
 noise for the report. Its JSON output is kept as `evidence/d2a-lasso/host.json`. GAPS section 5's
 existing numbers (a Linux Xeon) stay as they are.
@@ -94,11 +96,16 @@ From `reconstruction/` in its venv, after `git clone --depth 1 https://github.co
 ../SimpleTES` (the clone's commit hash goes into the report):
 
 ```
-python scripts/run_dream_rsi.py --simpletes ../SimpleTES --task lasso_path \
-    --workdir runs/d2a-lasso --discovery-agent gemini --policy-agent claude \
+python scripts/run_dream_rsi.py --simpletes /Users/controlroom/Dream-RSI/SimpleTES \
+    --task lasso_path --workdir /Users/controlroom/dream-rsi-runs/d2a-lasso \
+    --discovery-agent "$(cat discovery.json)" --policy-agent "$(cat policy.json)" \
     --iterations 2 --versions 3 --workers 4 --grid 4 3 --hard-max 6 4 \
     --agent-timeout 900 --eigen-include /opt/local/include/eigen3
 ```
+
+(Amended while planning, section 11: the workdir is outside the repository, and the two agents
+are isolated JSON argv. The plan's Task 5 builds `discovery.json` and `policy.json`, proves them
+with a one-call pre-flight each, and launches the run detached under `nohup`.)
 
 - **Grid and caps.** Fallback 4 x 3 (16 attempts per round). The hard caps are 6 x 4 rather than
   the default 32 x 19: no budget cap exists yet, so the caps are the only bound on what a
@@ -114,8 +121,8 @@ python scripts/run_dream_rsi.py --simpletes ../SimpleTES --task lasso_path \
   provider, the real Listing 1 and 2 prompts from `generated/`, evaluations serialized.
 - **Launch and failure.** The run is launched from the session in the background with a log
   file, only after the owner says go (it spends budget). An interrupt or crash freezes the partial
-  iteration under `runs/`; one restart is allowed (delete exactly the directories the guard names
-  and rerun; that iteration's calls are spent again). A second failure ends the experiment with
+  iteration under `runs/`; one restart is allowed (move exactly the directories the guard names
+  aside, keeping them as evidence, and rerun; that iteration's calls are spent again). A second failure ends the experiment with
   what exists: a failing run is evidence too. Quota errors show up as failed attempts in the
   health table; the run is not retried into a broken quota.
 
@@ -123,7 +130,9 @@ python scripts/run_dream_rsi.py --simpletes ../SimpleTES --task lasso_path \
 
 `scripts/report_run.py --workdir <dir> --out <dir>` reads a finished or partial workdir and
 writes `report.md` and `report.json` (the same numbers, machine-readable). It touches no loop
-code and imports `see.world` only, to load traces. Four sections, one per D2 question:
+code and imports only `see.world` (to load traces) and `see.live.node_dirname` (the attempt
+directory name); the caps and the program's file name come from the runner's launch record
+(section 11). Four sections, one per D2 question:
 
 1. **Per-round call budget.** Per iteration, from the live manifest: the planned grid, whether it
    was rejected for the fallback, the effective grid, probes spent, and the cap product in force.
@@ -144,7 +153,8 @@ evaluator errors, baseline and best score) and per version (valid, reward, Eq. (
 deployed or not); the host facts (machine, compiler, Eigen, SimpleTES commit); and the smoke
 test's noise measurement from `host.json` when present.
 
-**Tests.** A scripted-agent workdir built inside the test (toy task, a 2 x 2 grid, one attempt
+**Tests.** A scripted-agent workdir built inside the test (toy task, a 2 x 1 fallback grid, i.e.
+two branches of two attempts, one attempt
 deliberately left byte-identical to its parent, one policy version that plans wider than the
 tree), every count hand-computed, in the pin style of `tests/test_ledger.py`; the resume-source
 rule gets its own pin against `see/live.py`'s so the two cannot drift.
@@ -153,8 +163,9 @@ rule gets its own pin against `see/live.py`'s so the two cannot drift.
 
 SimpleTES is AGPL and not vendored; every attempt's program is a modified copy of its seed, so
 programs do not enter the repository. Committed under `reconstruction/evidence/d2a-lasso/`:
-`state.json`, the frozen trace pool (traces and manifests), every policy version's `method.py`
-and sweep report (written against the frozen policy API, not derived from SimpleTES), each
+`state.json`, `launches.jsonl`, the frozen trace pool (traces and manifests), every policy
+version's `method.py` and sweep output (`beta_sweep.json` and `policy_execution_traces.jsonl`;
+written against the frozen policy API, not derived from SimpleTES), each
 attempt's `score.json`, `error.txt` and proposal, `host.json`, and both reports. The full workdir
 archive stays on disk, git-ignored, with its sha256 in the report; the report script does the
 byte-identity analysis at report time, so the programs are not needed in the repository.
@@ -182,10 +193,13 @@ table also says whether the run itself surfaced anything the audit did not antic
 
 1. `--eigen-include` in the adapter, the runner and `verify_lasso.py`; the fake-task pin; the
    README lines.
-2. `scripts/report_run.py` with its hand-computed pins.
-3. SimpleTES clone and the smoke test (owner's go; CPU only).
-4. The run (owner's go; spends budget).
-5. Report, evidence commit, GAPS rows, docs, CI pin.
+2. The runner's launch record, `launches.jsonl` (section 11), with its pins.
+3. `scripts/report_run.py` with its hand-computed pins.
+4. SimpleTES clone and the smoke test (owner's go; CPU only; run by the controller).
+5. The pre-flight and the run (owner's go; spends budget; run by the controller).
+6. Report, evidence scan and commit, GAPS §5, docs.
+
+(Amended while planning: six tasks, section 11.)
 
 Process as before: this spec, then the writing-plans skill, then subagent-driven execution with a
 task review each, a whole-branch review at the end, and the finishing menu.
@@ -194,3 +208,64 @@ task review each, a whole-branch review at the end, and the finishing menu.
 
 None that block the plan. Whether GAPS section 5 should carry a second machine row for this
 host's Listing 3 timings is left to the report's numbers; the smoke test produces them either way.
+
+## 11. Amendments while planning (2026-09-25)
+
+The plan (`docs/superpowers/plans/2026-09-25-real-agent-run-d2a.md`) was written from a spike.
+Every code block in it was run in a throwaway worktree first. These changes came out of that
+spike, and each overrides the section it names.
+
+1. **Workdir outside the repository** (section 4): `/Users/controlroom/dream-rsi-runs/d2a-lasso`.
+   The discovery agent has a shell. Inside `reconstruction/runs/` it could read
+   `generated/lasso_path_dream_rsi.py` (the paper's final answer), edit tracked files, and load
+   this repository's `.gemini/GEMINI.md`.
+2. **Isolated agents** (section 1, **Decision (owner, 2026-09-25)**).
+   - Why:
+     - The owner's Gemini settings disable yolo mode, and they load the superpowers and
+       context-mode extensions and hooks.
+     - The owner's Claude setup loads a global CLAUDE.md, plugins, and hooks that write into
+       the owner's notes.
+     - A headless call cannot pass an approval gate. An attempt could then end with its
+       program untouched, which is exactly the count D2a measures.
+   - Gemini:
+     - runs under a dedicated `HOME` holding only its login files, the owner's auth type and
+       `billing` block, and trust for the run directory;
+     - is pinned to the owner's model setting, `auto-gemini-2.5`;
+     - gets `--include-directories <workdir>`, because Listing 1 sends it outside its cwd.
+   - Claude:
+     - runs with `--setting-sources project,local --strict-mcp-config` and
+       `--add-dir <workdir>/trace_pool`;
+     - falls back to a dedicated `CLAUDE_CONFIG_DIR` if the pre-flight shows user instructions
+       still loading.
+   - Both are JSON argv; no code change.
+   - The launch environment unsets the controlling session's `CLAUDE*` variables.
+   - The pre-flight is one call per agent. It must show that the agent authenticates, reads
+     outside its cwd, writes a file, loads no extension, and fires no user hook.
+3. **Launch record** (sections 5 and 9, new Task 2). The runner appends one line per launch to
+   `<workdir>/launches.jsonl`, before the first iteration. The line holds:
+   - the caps and the program's file name, which no manifest carries;
+   - each agent's argv and CLI version;
+   - the host toolchain: platform, CPU, `g++`, Eigen version and SimpleTES commit, captured at
+     run time.
+
+   The report reads the record's last line.
+4. **The report's imports** (section 5): `see.live.node_dirname`, beside `see.world`.
+5. **The evidence subset** (section 6) gains:
+   - `launches.jsonl`;
+   - each version's `policy_execution_traces.jsonl`, the per-episode source of the
+     out-of-support and empty-batch counts (`beta_sweep.json` keeps three errors and one
+     `any()` flag).
+
+   `report_run.py --copy-evidence` copies an allowlist to `evidence/d2a-lasso/workdir/`, and
+   withholds any file quoting `CPP_CODE`. `reconstruction/evidence/` is excluded from ruff and
+   from the whitespace hooks, so evidence stays as written. Before the commit, a scan counts
+   pasted programs, quoted source, home paths, the owner's email address and files over
+   500 KB. What to redact is the owner's call.
+6. **Restart** (section 4). The guard-named directories are moved aside to
+   `/Users/controlroom/dream-rsi-runs/d2a-lasso-restart1/`, with `task/`, `launches.jsonl` and
+   `state.json` copied beside them, instead of being deleted. The partial iteration is evidence
+   too, and it is reported as a workdir of its own.
+7. **The report's test run** (section 5): a 2 x 1 fallback grid and 3 x 2 hard caps. The wider
+   policy version asks for 3 x 1.
+8. **Controller-run tasks** (section 9). The smoke test and the run are run by the session
+   itself, never by a subagent, and each needs the owner's go.

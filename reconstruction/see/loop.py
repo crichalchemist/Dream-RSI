@@ -342,6 +342,7 @@ class DreamRSI:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            errors="replace",
             start_new_session=True,  # a timeout or an interrupt kills what the policy code forked
         )
         try:

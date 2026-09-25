@@ -114,6 +114,17 @@ ESCAPEE = (
     "time.sleep(30)\n"
 )
 
+# The escapee stand-in whose escapee touches a marker file (the agent's argv[2]) once it has left
+# the process group, so a test can act only after the escape has really happened.
+ESCAPEE_THEN_MARK = (
+    "import subprocess, sys, time\n"
+    "sys.stdout.buffer.write(b'\\xe2\\x82')\n"
+    "sys.stdout.flush()\n"
+    "subprocess.Popen([sys.executable, '-c', 'import os, pathlib, sys, time; os.setsid(); "
+    "pathlib.Path(sys.argv[1]).touch(); time.sleep(3)', sys.argv[2]])\n"
+    "time.sleep(30)\n"
+)
+
 
 def test_timeout_returns_even_when_an_escapee_holds_the_pipes(tmp_path):
     """A descendant outside the group is not killed, by design; it must not make the timed-out
@@ -198,3 +209,37 @@ def test_interrupt_kills_running_agents_and_records_nothing(tmp_path, stub_promp
     assert q.cells == {}  # nothing from the interrupted batch is kept
     assert sorted(os.listdir(tree)) == ["attempt_b000_a000", "attempt_b001_a000"]
     assert not list(tree.rglob("score.json"))  # killed attempts are not evaluated
+
+
+def test_terminate_returns_even_when_an_escapee_holds_the_pipes(tmp_path):
+    """terminate() ends a call within about a second even when a descendant outside the group
+    still holds the agent's pipes: the call reports terminated instead of waiting for EOF."""
+    marker = tmp_path / "escapee-forked"
+    agent = CommandAgent(
+        [sys.executable, "-c", ESCAPEE_THEN_MARK, "{prompt}", str(marker)],
+        timeout=10.0,
+        kill_grace=0.2,
+    )
+    results: list = []
+    in_flight = threading.Thread(
+        target=lambda: results.append(agent("p", cwd=str(tmp_path), target=str(tmp_path))),
+        daemon=True,
+    )
+    in_flight.start()
+    deadline = time.time() + 5.0
+    while not marker.exists() and time.time() < deadline:
+        time.sleep(0.02)
+    assert marker.exists()
+    started = time.time()
+    agent.terminate()
+    in_flight.join(timeout=4.0)
+    assert not in_flight.is_alive() and time.time() - started < 2.0  # the escapee sleeps 3 s
+    assert results == [{"returncode": None, "stdout": "", "stderr": "agent terminated"}]
+
+
+def test_a_half_written_multibyte_character_does_not_crash_the_call(tmp_path):
+    """An agent killed or exiting between the bytes of one character must not raise out of the
+    call: its output is diagnostic text, decoded with replacement."""
+    agent = CommandAgent(["sh", "-c", "printf '\\342\\202'; exit 3", "{prompt}"], timeout=3.0)
+    result = agent("p", cwd=str(tmp_path), target=str(tmp_path))
+    assert result == {"returncode": 3, "stdout": "�", "stderr": ""}

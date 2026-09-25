@@ -103,22 +103,34 @@ class CommandAgent:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                errors="replace",
                 env={**os.environ, **(self.env or {})},
                 start_new_session=True,
             )
             self._live.add(p)
+        deadline = time.monotonic() + self.timeout
         try:
-            try:
-                out, err = p.communicate(timeout=self.timeout)
-            except subprocess.TimeoutExpired:
-                kill_process_group(p, self.kill_grace)
-                self._close_pipes(p)
-                return {
-                    "returncode": None,
-                    "stdout": "",
-                    "stderr": f"agent timed out after {self.timeout}s",
-                    "timed_out": True,
-                }
+            while True:  # wait in slices, so a claimed call notices terminate() within a second
+                remaining = max(0.0, deadline - time.monotonic())
+                try:
+                    out, err = p.communicate(timeout=min(1.0, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() >= deadline:
+                        kill_process_group(p, self.kill_grace)
+                        self._close_pipes(p)
+                        return {
+                            "returncode": None,
+                            "stdout": "",
+                            "stderr": f"agent timed out after {self.timeout}s",
+                            "timed_out": True,
+                        }
+                    with self._lock:
+                        claimed = p not in self._live
+                    if claimed:
+                        # terminate() killed the group; a descendant outside it may hold the pipes
+                        self._close_pipes(p)
+                        return self._terminated()
             with self._lock:  # terminate() claims a running call by removing it from _live
                 if p not in self._live:
                     return self._terminated()

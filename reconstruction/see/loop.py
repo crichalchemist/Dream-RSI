@@ -34,7 +34,7 @@ from collections.abc import Callable
 
 from see.live import LiveQuestion, TaskSpec, kill_process_group, oriented_score
 from see.loader import load_policy
-from see.objective import DEFAULT_BETAS, DEFAULT_LAMBDA, score_of, validate_plan
+from see.objective import DEFAULT_BETAS, DEFAULT_LAMBDA, OBJECTIVES, score_of, validate_plan
 from see.policy.api import GridPlanningContext
 from see.prompts import policy_improvement_prompt
 
@@ -81,6 +81,10 @@ class LoopConfig:
     kill_grace: float = 5.0  # seconds between SIGTERM and SIGKILL for the sweep subprocess
     initial_policy: str = BASELINE_POLICY  # pi_1: the paper starts from parallel refine
     serialize_eval: bool = True
+
+    def __post_init__(self):
+        if self.objective not in OBJECTIVES:
+            raise ValueError(f"objective {self.objective!r} is not one of {OBJECTIVES}")
 
 
 class DreamRSI:
@@ -145,9 +149,7 @@ class DreamRSI:
         for _ in range(iterations or self.c.iterations):
             t = self.state["iteration"] + 1
             self.online(t)
-            self.offline(t)
-            self.state["iteration"] = t
-            self._save_state()
+            self.offline(t)  # persists the counter together with what it deployed
         return self.state
 
     def online(self, t: int):
@@ -216,6 +218,8 @@ class DreamRSI:
                 q, partial, f"iter{t:04d}-partial", {"iteration": t, "partial": True}, manifest
             )
             raise
+        if error is None and q.fault is not None:  # the policy swallowed the batch's fault
+            error = f"batch abandoned: {q.fault}"
         manifest = self._manifest(t, policy, plan, grid, q, error, started)
         os.makedirs(out)
         self._freeze(q, out, f"iter{t:04d}", {"iteration": t}, manifest)
@@ -270,11 +274,15 @@ class DreamRSI:
             {k: c[k] for k in ("round", "m", "score", "valid", "sha256")} for c in candidates
         ]
         self.state["log"][-1]["selected"] = best["round"]
-        self._save_state()
+        self.state["iteration"] = t
+        self._save_state()  # the only write per iteration: deploy, digest, log and counter together
         return deployed
 
     def _deploy(self, t: int, record: dict) -> str:
-        """Copy the scored candidate to deployed/ as pi_{t+1}, refusing any changed bytes."""
+        """Copy the scored candidate to deployed/ as pi_{t+1}, refusing any changed bytes.
+
+        The state is persisted by offline() at its end, together with the iteration counter.
+        """
         with open(record["method"], "rb") as f:
             code = f.read()
         digest = hashlib.sha256(code).hexdigest()
@@ -288,7 +296,6 @@ class DreamRSI:
             f.write(code)  # the verified bytes, not a second read of the file
         self.state["deployed"], self.state["deployed_round"] = deployed, record["round"]
         self.state["deployed_sha256"] = digest
-        self._save_state()
         return deployed
 
     def _archive(self, method_path: str, t: int, m: int, agent_run=None) -> dict:

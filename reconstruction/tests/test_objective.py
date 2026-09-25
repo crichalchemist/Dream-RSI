@@ -39,7 +39,9 @@ def test_attainment_normalises_between_root_and_ceiling():
     assert attainment(2.0, t) == pytest.approx(0.5)
     assert attainment(3.0, t) == 1.0
     flat = Trace([Cell(0, 0, 0, 0.5)], baseline_score=1.0, max_parallelism=1)
+    # a flat trace: nothing recorded beats the root, so every episode attains all there is
     assert attainment(None, flat) == 1.0
+    assert attainment(0.1, flat) == 1.0 and attainment(5.0, flat) == 1.0
 
 
 def test_pareto_auc_uses_only_non_dominated_points():
@@ -170,3 +172,20 @@ def test_default_hard_caps_admit_no_more_calls_than_the_paper():
             plan = validate_plan(GridPlan(branch_count, refine_count, reason="test"), context)
             if plan is not None:
                 assert plan.branch_count * (plan.refine_count + 1) <= 640  # 32 x 20, Flash
+
+
+def test_a_mistyped_objective_fails_before_any_budget_is_spent():
+    """A name that is not one of OBJECTIVES used to fall through to Eq. (1) silently at scoring
+    time, after the offline phase had spent its budget; it is refused when the config is built."""
+    with pytest.raises(ValueError, match=r"'eq2' is not one of \('pareto', 'eq1'\)"):
+        LoopConfig(workdir="unused", objective="eq2")
+    assert LoopConfig(workdir="unused", objective="eq1").objective == "eq1"
+    assert LoopConfig(workdir="unused").objective == "pareto"
+
+
+def test_score_of_selects_the_named_statistic_and_refuses_others():
+    report = {"pareto": {"reward": 0.25}, "eq1": {"V": 7.0}}
+    assert score_of(report, "pareto") == 0.25
+    assert score_of(report, "eq1") == 7.0
+    with pytest.raises(ValueError, match=r"unknown objective 'auc'"):
+        score_of(report, "auc")

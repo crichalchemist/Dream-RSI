@@ -79,6 +79,15 @@ def test_replay_reproduces_live_episodes_across_seeds_and_policies(tmp_path):
             pool = load_pool(loop.pool)  # read back exactly as `python -m see sweep` does
             assert len(pool) == 1, where
             trace = pool[0][0]
+            branches, refines = trace.grid
+            assert (branches, refines) == (
+                manifest["effective_grid"]["branch_count"],
+                manifest["effective_grid"]["refine_count"],
+            ), where
+            partial = len(trace) < branches * (refines + 1)
+            assert partial == (name == "portfolio" and seed in (0, 1)), (
+                f"{where}: {len(trace)} cells recorded of a {branches} x {refines + 1} grid"
+            )
             context_for = context_factory(pool, cfg.fallback_grid, cfg.hard_max_grid)
             policy_cls = load_policy(loop.state["deployed"])
             episode = run_episode(
@@ -90,6 +99,7 @@ def test_replay_reproduces_live_episodes_across_seeds_and_policies(tmp_path):
                 beta2=cfg.beta2,
                 record=True,
             )
+            assert episode.plan == manifest["planned_grid"], where
             replay = _transcript(episode.log)
             assert replay == live, (
                 f"{where}: replay departs from live at round {_first_differing_round(live, replay)}"

@@ -24,7 +24,7 @@ pip install -e ".[extract,lasso,dev]" # lasso: pyright needs numpy/scikit-learn 
 pre-commit install                    # once per clone; ruff, ruff-format, pyright run on every commit
 python tools/extract_listings.py      # PREREQUISITE: writes generated/ (2 prompts + Lasso solver)
 python tools/extract_listings.py --check   # digest drift vs tools/generated.sha256; exit 1 on drift
-python -m pytest -q                   # whole suite, ~12s; exact count pinned in .github/workflows/ci.yml
+python -m pytest -q                   # whole suite, ~14s; exact count pinned in .github/workflows/ci.yml
 python -m pytest -q tests/test_loop.py::test_on_policy_replay_reproduces_the_live_episode
 python -m see demo --workdir /tmp/drsi                                          # whole loop, toy task, ~8s
 python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tmp/sweep
@@ -74,8 +74,8 @@ initial policy π₁; `see/policies/portfolio.py` is a hand-written stand-in for
 
 **Two objectives that disagree.** `see/objective.py` implements both the paper's Eq. (1)
 (`eq1_value`) and Listing 2's beta-sweep `pareto.auc − λ·parallel_penalty` (`beta_sweep`).
-`LoopConfig.objective` selects one; default `"pareto"`. The paper never says which selected its
-reported policies (GAPS.md §4).
+`LoopConfig.objective` selects one, `"pareto"` by default, and any other name is refused when the
+config is built. The paper never says which selected its reported policies (GAPS.md §4).
 
 **Agents and tasks are argv and adapters.** `see/live.py:CommandAgent` runs any CLI whose argv
 contains `"{prompt}"`; `AGENT_PRESETS` has `gemini` and `claude`. `see/live.py:TaskSpec` is the
@@ -85,8 +85,10 @@ prompts from `generated/`, which is why extraction is a prerequisite.
 
 ## Conventions
 
-- Every choice the paper does not specify gets a row in `GAPS.md` §3; every contradiction found
-  in the paper goes in §4. Keep the README status table in step with what is actually implemented.
+- Every choice the paper does not specify gets a row in `GAPS.md` §3 with its "How to change" cell
+  and a hand-computed pin (`tests/test_ledger.py` or the module that owns the path); every
+  contradiction found in the paper goes in §4. Keep the README status table in step with what is
+  actually implemented.
 - Test names state the paper claim or business outcome they protect
   (`test_eq1_matches_the_paper_formula`, `test_broken_versions_score_minus_infinity_and_are_never_deployed`).
   Keep that style.

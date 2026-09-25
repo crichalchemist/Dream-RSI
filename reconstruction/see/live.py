@@ -242,6 +242,7 @@ class LiveQuestion(Question):
         self.cells = {}
         self._next_seq = 0
         self._cancelled = threading.Event()  # set once the batch in flight has been abandoned
+        self.fault: str | None = None  # why the batch in flight was abandoned, once one was
         super().__init__(
             baseline_score,
             max_parallelism,
@@ -290,13 +291,13 @@ class LiveQuestion(Question):
         except BaseException as e:
             # a worker fault ends the episode and an interrupt ends the run; either way the rest
             # of the batch is abandoned: queued attempts never start, running agents are killed
-            self._cancel(pool, close=not isinstance(e, Exception))
+            self._cancel(pool, close=not isinstance(e, Exception), fault=e)
             raise
         finally:
             try:
                 pool.shutdown(wait=True)  # brief once the agents are dead
-            except BaseException:  # an interrupt while the workers were being joined
-                self._cancel(pool, close=True)
+            except BaseException as e:  # an interrupt while the workers were being joined
+                self._cancel(pool, close=True, fault=e)
                 raise
         cells = [f.result() for f in futures]
         observations = [  # parents come from earlier batches: no parent/child pair shares one
@@ -308,12 +309,18 @@ class LiveQuestion(Question):
         self.cells.update({c.id: c for c in cells})  # one statement, last: never half a batch
         return observations
 
-    def _cancel(self, pool: concurrent.futures.ThreadPoolExecutor, close: bool) -> None:
+    def _cancel(
+        self, pool: concurrent.futures.ThreadPoolExecutor, close: bool, fault: BaseException
+    ) -> None:
         """Abandon the batch: queued attempts never start and running agents are killed.
 
         ``close`` (an interrupt) also refuses every later call. A worker fault leaves the agent
-        usable, because the loop goes on to offline() and to the next iteration with it.
+        usable, because the loop goes on to offline() and to the next iteration with it. The
+        first fault is kept so online() can record the cause even when the policy swallows the
+        exception and keeps probing.
         """
+        if self.fault is None:  # a later refusal of the same batch is not the cause
+            self.fault = f"{type(fault).__name__}: {fault}"
         self._cancelled.set()
         pool.shutdown(wait=False, cancel_futures=True)
         stop = getattr(self.agent, "terminate" if close else "kill_running", None)
@@ -366,6 +373,10 @@ class LiveQuestion(Question):
         else:
             result = self._evaluate(program)
         error = result.get("error")
+        if run and run.get("timed_out") and not error:
+            # the agent was killed at its timeout: what it left is scored, but the attempt is
+            # the failure the taxonomy already names (classify_failure maps this text to timeout)
+            error = run.get("stderr") or "agent timed out"
         fail_class = "no_program" if result.get("no_program") else classify_failure(error)
         score = oriented_score(t, result)
         os.makedirs(os.path.join(node, "eval"), exist_ok=True)

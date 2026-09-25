@@ -31,6 +31,7 @@ from see.world import ReplayQuestion, Trace
 
 DEFAULT_BETAS = tuple(round(0.1 * i, 1) for i in range(11))  # Listing 2 clamps beta to [0, 1]
 DEFAULT_LAMBDA = 0.1
+OBJECTIVES = ("pareto", "eq1")  # Listing 2's pareto.reward, Sec. 3's Eq. (1); GAPS §3
 
 
 def attainment(best: float | None, trace: Trace) -> float:
@@ -249,4 +250,8 @@ def beta_sweep(
 
 def score_of(report: dict, objective: str) -> float:
     """Selection statistic: ``"pareto"`` (Listing 2) or ``"eq1"`` (Sec. 3)."""
-    return report["pareto"]["reward"] if objective == "pareto" else report["eq1"]["V"]
+    if objective == "pareto":
+        return report["pareto"]["reward"]
+    if objective == "eq1":
+        return report["eq1"]["V"]
+    raise ValueError(f"unknown objective {objective!r}: choose one of {OBJECTIVES}")

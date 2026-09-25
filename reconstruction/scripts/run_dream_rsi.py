@@ -15,6 +15,7 @@ import os
 
 from see.live import CommandAgent
 from see.loop import DreamRSI, LoopConfig, install_signal_handlers
+from see.objective import OBJECTIVES
 from see.tasks import SIMPLETES_TASKS, simpletes_task
 
 
@@ -36,7 +37,7 @@ def main(argv=None):
     ap.add_argument("--workers", type=int, default=10, help="W")
     ap.add_argument("--grid", type=int, nargs=2, default=(10, 10), help="fallback W R")
     ap.add_argument("--hard-max", type=int, nargs=2, default=(32, 19))
-    ap.add_argument("--objective", choices=("pareto", "eq1"), default="pareto")
+    ap.add_argument("--objective", choices=OBJECTIVES, default="pareto")
     a = ap.parse_args(argv)
     os.makedirs(a.workdir, exist_ok=True)
     cfg = LoopConfig(

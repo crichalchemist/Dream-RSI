@@ -166,7 +166,28 @@ class DreamRSI:
             policy.solve(q, budget=None)
         except Exception as e:  # keep what was collected
             error = f"{type(e).__name__}: {e}"
-        manifest = {
+        except BaseException as e:  # an interrupt: freeze under runs/, never into the pool
+            partial = os.path.join(run_dir, "partial")
+            os.makedirs(partial, exist_ok=True)
+            error = f"{type(e).__name__}: {e}"
+            manifest = self._manifest(t, policy, plan, grid, q, error, started)
+            manifest["partial"] = True
+            self._freeze(
+                q, partial, f"iter{t:04d}-partial", {"iteration": t, "partial": True}, manifest
+            )
+            raise
+        manifest = self._manifest(t, policy, plan, grid, q, error, started)
+        os.makedirs(out)
+        self._freeze(q, out, f"iter{t:04d}", {"iteration": t}, manifest)
+        current = os.path.join(self.pool, "_current")
+        if os.path.lexists(current):
+            os.remove(current)
+        os.symlink(f"iter{t:04d}", current)
+        self.state["log"].append({"iteration": t, "live": manifest})
+        return manifest
+
+    def _manifest(self, t, policy, plan, grid, q: LiveQuestion, error, started) -> dict:
+        return {
             "iteration": t,
             "policy_round": self.state.get("deployed_round", "initial"),
             "beta": getattr(policy, "beta", None),
@@ -178,19 +199,15 @@ class DreamRSI:
             "started": started,
             "finished": time.time(),
         }
-        os.makedirs(out)
-        q.frozen(f"iter{t:04d}", {"iteration": t}).save(os.path.join(out, "trace.json"))
-        with open(os.path.join(out, "live_episode.jsonl"), "w") as f:
+
+    @staticmethod
+    def _freeze(q: LiveQuestion, into: str, trace_id: str, info: dict, manifest: dict) -> None:
+        q.frozen(trace_id, info).save(os.path.join(into, "trace.json"))
+        with open(os.path.join(into, "live_episode.jsonl"), "w") as f:
             for step in q.episode:
                 f.write(json.dumps(step) + "\n")
-        with open(os.path.join(out, "live_cycle_manifest.json"), "w") as f:
+        with open(os.path.join(into, "live_cycle_manifest.json"), "w") as f:
             json.dump(manifest, f, indent=1)
-        current = os.path.join(self.pool, "_current")
-        if os.path.lexists(current):
-            os.remove(current)
-        os.symlink(f"iter{t:04d}", current)
-        self.state["log"].append({"iteration": t, "live": manifest})
-        return manifest
 
     def offline(self, t: int) -> str:
         """Stages 2-3: evaluate M versions by replay over H_t and deploy the argmax."""

@@ -10,6 +10,7 @@ from see.loop import DreamRSI, LoopConfig
 from see.objective import run_episode
 from see.pool import context_factory, load_pool
 from see.toy import ScriptedDiscoveryAgent, ScriptedPolicyAgent, make_task
+from see.world import Trace
 
 
 @pytest.fixture(scope="module")
@@ -305,3 +306,28 @@ def test_tampered_candidate_is_not_deployed(tmp_path, stub_prompts):
         loop._deploy(1, record)
     assert {n: _sha256(os.path.join(deployed_dir, n)) for n in os.listdir(deployed_dir)} == before
     assert json.dumps(loop.state) == state_before
+
+
+def test_interrupt_freezes_the_partial_tree_under_runs_not_the_pool(tmp_path, stub_prompts):
+    """What an interrupted iteration collected is a readable trace under runs/, and the pool
+    never sees it."""
+    loop = _interruptible_loop(str(tmp_path), _RecordingAgent(interrupt_on=2))
+    state = (tmp_path / "state.json").read_text()
+    with pytest.raises(_Interrupted):
+        loop.online(1)
+    partial = tmp_path / "runs" / "iter0001" / "partial"
+    trace = Trace.load(str(partial / "trace.json"))
+    assert trace.trace_id == "iter0001-partial"
+    assert trace.info == {"iteration": 1, "partial": True}
+    assert sorted(trace.cells) == ["b0a0"]  # only the cell completed before the interrupt
+    assert trace.grid == (2, 1)
+    with open(partial / "live_cycle_manifest.json") as f:
+        manifest = json.load(f)
+    assert manifest["error"] == "_Interrupted: killed while attempt_b000_a001 was running"
+    assert manifest["partial"] is True
+    assert manifest["probes"] == 1
+    assert manifest["effective_grid"] == {"branch_count": 2, "refine_count": 1}
+    with open(partial / "live_episode.jsonl") as f:
+        assert len(f.readlines()) == 1  # the one round that completed
+    assert os.listdir(tmp_path / "trace_pool") == []
+    assert (tmp_path / "state.json").read_text() == state

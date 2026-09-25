@@ -248,8 +248,9 @@ process, so the red run is the helper being absent).
 - C2: `as_completed` with never-dropped siblings; per-attempt bookkeeping guard; `Trace` before the
   pool dir; wrap the live `plan_grid`; all-`no_program` circuit breaker; evaluator subprocess with a
   timeout (which would also make interrupts kill evaluations).
-- C3: atomic writes and `state.json.bak`; refuse an all-invalid winner; load-time
-  `deployed_sha256` check; sweep-vs-archive digest comparison; `trace.json` digest; write-protect
-  frozen directories.
+- C3: atomic writes and `state.json.bak`; refuse an all-invalid winner; `trace.json` digest;
+  write-protect frozen directories. Shipped by the follow-up branch `spec/runtime-safety-c2`,
+  which covered C1's review hand-forward rather than the C2 list above: the load-time
+  `deployed_sha256` check and the sweep-vs-archive digest comparison.
 - Elsewhere: resumability (owner decision: not planned); Windows support; static checks on LLM
   policy code; scrubbing the environment passed to agents; relative history symlinks.

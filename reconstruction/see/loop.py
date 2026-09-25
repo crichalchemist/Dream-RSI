@@ -164,6 +164,15 @@ class DreamRSI:
                 f"interrupted or already ran; delete {'it' if one else 'them'}, do not merge into "
                 f"{'it' if one else 'them'}"
             )
+        expected = self.state.get("deployed_sha256")  # absent until the first offline() completes
+        if expected is not None:
+            with open(self.state["deployed"], "rb") as f:
+                digest = hashlib.sha256(f.read()).hexdigest()
+            if digest != expected:
+                raise RuntimeError(
+                    f"{self.state['deployed']} changed since it was deployed (sha256 {digest}, "
+                    f"deployed {expected}): refusing to run it"
+                )
         policy = load_policy(self.state["deployed"])(None)  # baked-in default beta
         ctx = self._context(self.manifests())
         plan = validate_plan(policy.plan_grid(ctx), ctx)
@@ -293,6 +302,11 @@ class DreamRSI:
             with open(os.path.join(rdir, "dev_agent.json"), "w") as f:
                 json.dump(agent_run, f, indent=1, default=str)
         report = self._sweep(archived, rdir)
+        if "sha256" in report and report["sha256"] != digest:  # the sweep hashes what it loads
+            raise RuntimeError(
+                f"{archived} was scored as sha256 {report['sha256']} but archived as {digest}: "
+                "the sweep did not score the archived bytes"
+            )
         return {
             "round": name,
             "m": m,

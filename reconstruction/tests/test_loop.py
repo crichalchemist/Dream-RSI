@@ -311,6 +311,43 @@ def test_tampered_candidate_is_not_deployed(tmp_path, stub_prompts):
     assert json.dumps(loop.state) == state_before
 
 
+def test_a_deployed_policy_edited_since_deploy_is_refused_before_it_runs(tmp_path, stub_prompts):
+    """The digest state.json records at deploy time is checked again when the policy is loaded,
+    so an edited deployed/iterNNNN.py never drives a rollout."""
+    agent = _RecordingAgent()
+    loop = _interruptible_loop(str(tmp_path), agent)
+    loop.online(1)
+    loop.offline(1)
+    deployed = loop.state["deployed"]
+    assert deployed.endswith("iter0002.py") and loop.state["deployed_sha256"] == _sha256(deployed)
+    with open(deployed, "a") as f:
+        f.write("\n# edited after it was deployed\n")
+    calls_before = len(agent.targets)
+    state = (tmp_path / "state.json").read_text()
+    with pytest.raises(RuntimeError, match=r"iter0002\.py changed since it was deployed"):
+        loop.online(2)
+    assert len(agent.targets) == calls_before  # refused before any agent call
+    assert not (tmp_path / "runs" / "iter0002").exists()
+    assert (tmp_path / "state.json").read_text() == state
+
+
+def test_a_sweep_that_scored_other_bytes_than_the_archive_is_refused(tmp_path, monkeypatch):
+    """beta_sweep.json carries the sha256 the subprocess hashed before loading the method; a
+    score for other bytes than the archived ones is an integrity failure, not a score."""
+    loop = _interruptible_loop(str(tmp_path), _RecordingAgent())
+    method = tmp_path / "method.py"
+    method.write_text("# a policy\n")
+    invalid = {"valid": False, "errors": ["x"], "pareto": {"reward": -1e999}, "eq1": {"V": -1e999}}
+    monkeypatch.setattr(
+        loop, "_sweep", lambda archived, rdir: {"valid": True, "sha256": "0" * 64, **invalid}
+    )
+    with pytest.raises(RuntimeError, match=r"did not score the archived bytes"):
+        loop._archive(str(method), 1, 0)
+    # a crashed or timed-out sweep writes no digest, so there is nothing to compare
+    monkeypatch.setattr(loop, "_sweep", lambda archived, rdir: invalid)
+    assert loop._archive(str(method), 1, 1)["score"] == float("-inf")
+
+
 def test_interrupt_freezes_the_partial_tree_under_runs_not_the_pool(tmp_path, stub_prompts):
     """What an interrupted iteration collected is a readable trace under runs/, and the pool
     never sees it."""

@@ -76,7 +76,7 @@ constructor signature changes, no change to the policy contract.
 | `see/live.py`, module level | `kill_process_group(p, grace)`: SIGTERM, wait `grace`, SIGKILL, wait; tolerant of an already-dead group. |
 | `see/live.py`, `LiveQuestion` | `_interrupted: threading.Event`; `_execute` submits futures and, on any `BaseException` in the main thread, sets the event, cancels queued futures, calls `agent.terminate()` when the agent has one, and re-raises; `_run_attempt` raises before creating anything when the event is set. `eval/score.json` gains `agent_timed_out`. |
 | `see/loop.py`, `DreamRSI.online` | a second `except BaseException` branch freezes the partial tree under `runs/iterNNNN/partial/` and re-raises; the manifest-building code is shared by both paths. The guard also checks the first archive name and names every existing path. |
-| `see/loop.py`, `DreamRSI._sweep` | `Popen(start_new_session=True)` + `communicate(timeout=sweep_timeout)`; timeout kills the group and scores the version invalid as today; `finally` kills a still-live group. |
+| `see/loop.py`, `DreamRSI._sweep` | `Popen(start_new_session=True, errors="replace")` + `communicate(timeout=sweep_timeout)`; timeout kills the group and scores the version invalid as today; `finally` kills a still-live group. |
 | `see/loop.py`, module level | `archive_name(round, t, m)` used by `_archive` and the guard; `install_signal_handlers()` mapping SIGTERM and SIGHUP to `KeyboardInterrupt` (a SIGHUP inherited ignored stays ignored). `LoopConfig` gains `kill_grace: float = 5.0` (used by `_sweep`). |
 | `see/__main__.py:cmd_demo`, `scripts/run_dream_rsi.py:main` | call `install_signal_handlers()` first. |
 

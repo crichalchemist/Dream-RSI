@@ -72,7 +72,7 @@ constructor signature changes, no change to the policy contract.
 
 | Where | What changes |
 |---|---|
-| `see/live.py`, `CommandAgent` | `Popen(start_new_session=True)`; a locked registry of live children; process-group kill on timeout with `timed_out: True` in the result; new `terminate()`; new constructor field `kill_grace: float = 5.0`. |
+| `see/live.py`, `CommandAgent` | `Popen(start_new_session=True, errors="replace")`; a locked registry of live children; the call waits in one-second `communicate()` slices; process-group kill on timeout with `timed_out: True` in the result; new `terminate()`, which claims the running calls; new constructor field `kill_grace: float = 5.0`. |
 | `see/live.py`, module level | `kill_process_group(p, grace)`: SIGTERM, wait `grace`, SIGKILL, wait; tolerant of an already-dead group. |
 | `see/live.py`, `LiveQuestion` | `_interrupted: threading.Event`; `_execute` submits futures and, on any `BaseException` in the main thread, sets the event, cancels queued futures, calls `agent.terminate()` when the agent has one, and re-raises; `_run_attempt` raises before creating anything when the event is set. `eval/score.json` gains `agent_timed_out`. |
 | `see/loop.py`, `DreamRSI.online` | a second `except BaseException` branch freezes the partial tree under `runs/iterNNNN/partial/` and re-raises; the manifest-building code is shared by both paths. The guard also checks the first archive name and names every existing path. |
@@ -113,26 +113,36 @@ discarded rather than recorded with a marker (no new `fail_class`).
 
 `CommandAgent.__call__`:
 
-- Spawns `Popen(argv, cwd=cwd, stdout=PIPE, stderr=PIPE, text=True, env=..., start_new_session=True)`
-  and registers the child; unregisters in `finally`.
-- `communicate(timeout=self.timeout)`. On `TimeoutExpired`: `kill_process_group(p, self.kill_grace)`,
-  drain output, return `{"returncode": None, "stdout": "", "stderr": f"agent timed out after {self.timeout}s", "timed_out": True}`.
-- A closed agent returns `{"returncode": None, "stdout": "", "stderr": "agent terminated"}` without
-  spawning.
+- Under the lock: a closed agent returns `{"returncode": None, "stdout": "", "stderr": "agent terminated"}`
+  without spawning; otherwise spawns `Popen(argv, cwd=cwd, stdout=PIPE, stderr=PIPE, text=True,
+  errors="replace", env=..., start_new_session=True)` and registers the child. `errors="replace"`
+  because a process killed between the bytes of one character must not raise `UnicodeDecodeError`
+  out of the call; the output is diagnostic text only.
+- Waits in `communicate(timeout=min(1.0, remaining))` slices against a monotonic deadline. When the
+  deadline passes: `kill_process_group(p, self.kill_grace)`, close the pipes without reading them (a
+  descendant outside the killed group may still hold them), return
+  `{"returncode": None, "stdout": "", "stderr": f"agent timed out after {self.timeout}s", "timed_out": True}`.
+  When a slice finds the call claimed by `terminate()`: close the pipes and return the terminated
+  result. A call whose process finished before `terminate()` claimed it keeps its real result.
+- `finally`: if the process is still alive (an exception escaped `communicate()`, such as a Ctrl-C
+  in the calling thread), kill the group and close the pipes; unregister the child.
 
-`CommandAgent.terminate()`: under the lock, snapshot the live children, kill each group, mark the
-agent closed. Idempotent. Toy agents (`see/toy.py`) have no `terminate`; `_execute` uses
+`CommandAgent.terminate()`: under the lock, mark the agent closed and claim every registered child
+whose `poll()` is `None` by removing it from the registry; then kill each claimed group. Idempotent.
+The claimed call notices within one slice. Toy agents (`see/toy.py`) have no `terminate`; `_execute` uses
 `getattr(self.agent, "terminate", None)` and calls it only when callable.
 
-`kill_process_group(p, grace)`: `os.killpg(p.pid, SIGTERM)`, `p.wait(grace)`; if still alive,
-`os.killpg(p.pid, SIGKILL)`, `p.wait()`. `ProcessLookupError` means the group is already gone.
+`kill_process_group(p, grace)`: `os.killpg(p.pid, SIGTERM)`, `p.wait(grace)`, then
+`os.killpg(p.pid, SIGKILL)` unconditionally (a member can outlive the leader), `p.wait()`.
+`ProcessLookupError` means the group is already gone.
 
 `_run_attempt` writes `"agent_timed_out": bool(run.get("timed_out"))` into `eval/score.json` beside
 `agent_returncode`. The cell's error text is unchanged (`agent left no program (agent timed out …)`),
 so `classify_failure` and the fail classes are untouched.
 
-`DreamRSI._sweep`: `Popen(cmd, cwd=PKG_ROOT, stdout=PIPE, stderr=PIPE, text=True, start_new_session=True)`;
-`communicate(timeout=self.c.sweep_timeout)`; on `TimeoutExpired` kill the group with
+`DreamRSI._sweep`: `Popen(cmd, cwd=PKG_ROOT, stdout=PIPE, stderr=PIPE, text=True, errors="replace",
+start_new_session=True)` before the `try`, so a failure to spawn (a host error such as `EMFILE`)
+propagates instead of scoring the version invalid; `communicate(timeout=self.c.sweep_timeout)`; on `TimeoutExpired` kill the group with
 `self.c.kill_grace` and raise `RuntimeError(f"sweep timed out after {self.c.sweep_timeout}s")`
 into the existing `except Exception` branch, which writes the invalid report as today; `finally`:
 if `p.poll() is None`, kill the group. An interrupt arriving mid-sweep therefore kills the replay

@@ -1,13 +1,14 @@
 import hashlib
 import json
 import os
+import signal
 import time
 
 import pytest
 
 from see.live import LiveQuestion
 from see.loader import load_policy
-from see.loop import DreamRSI, LoopConfig, archive_name
+from see.loop import DreamRSI, LoopConfig, archive_name, install_signal_handlers
 from see.objective import run_episode
 from see.pool import context_factory, load_pool
 from see.toy import ScriptedDiscoveryAgent, ScriptedPolicyAgent, make_task
@@ -385,3 +386,16 @@ def test_restart_refuses_when_the_first_archive_dir_exists(tmp_path, stub_prompt
         loop.online(1)
     assert (archive / "method.py").read_text() == "# archived by the crashed run\n"
     assert (tmp_path / "state.json").read_text() == state
+
+
+def test_sigterm_takes_the_same_path_as_ctrl_c():
+    """`kill <pid>` raises KeyboardInterrupt in the main thread, so a run freezes its partial
+    tree and refuses on restart like Ctrl-C does, instead of exiting at once."""
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        install_signal_handlers()
+        with pytest.raises(KeyboardInterrupt, match=r"signal 15"):
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(0.5)  # the handler runs at the next bytecode boundary
+    finally:
+        signal.signal(signal.SIGTERM, previous)

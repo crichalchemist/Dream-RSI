@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -44,6 +45,18 @@ BASELINE_POLICY = os.path.join(PKG_ROOT, "see", "policies", "parallel_refine.py"
 def archive_name(round_no: int, t: int, m: int) -> str:
     """The policy_dev/history/ entry for version m of iteration t; rounds are numbered globally."""
     return f"r{round_no:04d}_t{t:02d}_m{m}"
+
+
+def install_signal_handlers() -> None:
+    """Make SIGTERM take the same path as Ctrl-C: raise KeyboardInterrupt in the main thread.
+
+    Called by the CLI entry points only; a library must not change signal disposition on import.
+    """
+    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+
+
+def _raise_keyboard_interrupt(signum, frame):
+    raise KeyboardInterrupt(f"signal {signum}")
 
 
 @dataclasses.dataclass

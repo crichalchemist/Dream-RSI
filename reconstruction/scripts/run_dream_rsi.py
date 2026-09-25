@@ -14,7 +14,7 @@ import json
 import os
 
 from see.live import CommandAgent
-from see.loop import DreamRSI, LoopConfig
+from see.loop import DreamRSI, LoopConfig, install_signal_handlers
 from see.tasks import SIMPLETES_TASKS, simpletes_task
 
 
@@ -23,6 +23,7 @@ def agent(spec: str, timeout: float) -> CommandAgent:
 
 
 def main(argv=None):
+    install_signal_handlers()  # SIGTERM freezes and refuses like Ctrl-C
     ap = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
     ap.add_argument("--simpletes", required=True)
     ap.add_argument("--task", required=True, choices=sorted(SIMPLETES_TASKS))

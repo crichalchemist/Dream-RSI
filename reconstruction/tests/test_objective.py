@@ -39,7 +39,9 @@ def test_attainment_normalises_between_root_and_ceiling():
     assert attainment(2.0, t) == pytest.approx(0.5)
     assert attainment(3.0, t) == 1.0
     flat = Trace([Cell(0, 0, 0, 0.5)], baseline_score=1.0, max_parallelism=1)
+    # a flat trace: nothing recorded beats the root, so every episode attains all there is
     assert attainment(None, flat) == 1.0
+    assert attainment(0.1, flat) == 1.0 and attainment(5.0, flat) == 1.0
 
 
 def test_pareto_auc_uses_only_non_dominated_points():

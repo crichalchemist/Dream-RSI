@@ -114,3 +114,68 @@ def test_agent_crash_is_a_failed_attempt_not_a_failed_episode(tmp_path, stub_pro
     obs = q.probe_batch(q.legal_actions())
     assert [o.fail_class for o in obs] == ["ok", "ok"] and obs[0].score == 1.0
     assert obs[0].delta_vs_parent is None  # the parent failed
+
+
+class _Interrupted(BaseException):
+    """Stands in for KeyboardInterrupt, which pytest intercepts itself."""
+
+
+class _RecordingAgent:
+    """The scripted discovery agent; records every call and dies on call ``interrupt_on``."""
+
+    def __init__(self, interrupt_on: int | None = None):
+        self.inner, self.interrupt_on = ScriptedDiscoveryAgent(seed=7), interrupt_on
+        self.targets: list[str] = []
+
+    def __call__(self, prompt: str, *, cwd: str, target: str) -> dict:
+        self.targets.append(os.path.basename(target))
+        if len(self.targets) == self.interrupt_on:
+            raise _Interrupted(f"killed while {self.targets[-1]} was running")
+        return self.inner(prompt, cwd=cwd, target=target)
+
+
+def _interruptible_loop(work: str, agent: _RecordingAgent) -> DreamRSI:
+    # one worker, so the agent's calls are serial: b0a0 first, then b0a1
+    cfg = LoopConfig(workdir=work, max_parallelism=1, fallback_grid=(2, 1), hard_max_grid=(2, 1))
+    return DreamRSI(cfg, make_task(work), agent, ScriptedPolicyAgent())
+
+
+def test_interrupted_iteration_is_refused_not_merged(tmp_path, stub_prompts):
+    """A partial runs/iterNNNN is never reused: online() refuses before any agent call."""
+    agent = _RecordingAgent()
+    loop = _interruptible_loop(str(tmp_path), agent)
+    run_dir = tmp_path / "runs" / "iter0001"
+    seeded = ("attempt_b000_a000", "attempt_b005_a000")  # inside and outside the 2 x 1 grid
+    for node in seeded:
+        (run_dir / "tree" / node).mkdir(parents=True)
+        (run_dir / "tree" / node / "proposal.md").write_text("left by the killed run\n")
+    state = (tmp_path / "state.json").read_text()
+    assert json.loads(state)["iteration"] == 0
+    with pytest.raises(RuntimeError, match=r"runs/iter0001 exists: .*delete it, do not merge"):
+        loop.online(1)
+    assert agent.targets == []
+    assert (tmp_path / "state.json").read_text() == state
+    assert not (tmp_path / "trace_pool" / "iter0001").exists()
+    assert os.listdir(run_dir) == ["tree"]
+    assert sorted(os.listdir(run_dir / "tree")) == list(seeded)
+    for node in seeded:
+        assert os.listdir(run_dir / "tree" / node) == ["proposal.md"]
+        assert (run_dir / "tree" / node / "proposal.md").read_text() == "left by the killed run\n"
+
+
+def test_interrupt_leaves_a_partial_run_that_a_restart_refuses(tmp_path, stub_prompts):
+    """An interrupt escapes online() mid-tree; restarting that iteration refuses, never merges."""
+    loop = _interruptible_loop(str(tmp_path), _RecordingAgent(interrupt_on=2))
+    state = (tmp_path / "state.json").read_text()
+    with pytest.raises(_Interrupted):
+        loop.online(1)
+    tree = tmp_path / "runs" / "iter0001" / "tree"
+    assert sorted(os.listdir(tree)) == ["attempt_b000_a000", "attempt_b000_a001"]
+    assert not (tmp_path / "trace_pool" / "iter0001").exists()
+    assert (tmp_path / "state.json").read_text() == state
+    restart_agent = _RecordingAgent()
+    restart = _interruptible_loop(str(tmp_path), restart_agent)
+    with pytest.raises(RuntimeError, match=r"runs/iter0001 exists: .*delete it, do not merge"):
+        restart.online(1)
+    assert restart_agent.targets == []
+    assert (tmp_path / "state.json").read_text() == state

@@ -128,14 +128,18 @@ class DreamRSI:
 
     def online(self, t: int):
         """Stage 1: the deployed policy drives discovery; the tree is frozen into the pool."""
+        run_dir = os.path.join(self.w, "runs", f"iter{t:04d}")
         out = os.path.join(self.pool, f"iter{t:04d}")
-        if os.path.exists(out):
-            raise RuntimeError(f"{out} exists: an interrupted iteration must be removed, not mixed")
+        for partial in (run_dir, out):  # runs/ is created first, trace_pool/ last
+            if os.path.exists(partial):
+                raise RuntimeError(
+                    f"{partial} exists: iteration {t} was interrupted or already ran; "
+                    "delete it, do not merge into it"
+                )
         policy = load_policy(self.state["deployed"])(None)  # baked-in default beta
         ctx = self._context(self.manifests())
         plan = validate_plan(policy.plan_grid(ctx), ctx)
         grid = (plan.branch_count, plan.refine_count) if plan else tuple(self.c.fallback_grid)
-        run_dir = os.path.join(self.w, "runs", f"iter{t:04d}")
         tree, history = os.path.join(run_dir, "tree"), os.path.join(run_dir, "history")
         os.makedirs(tree, exist_ok=True)
         os.makedirs(history, exist_ok=True)

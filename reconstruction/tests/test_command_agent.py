@@ -15,7 +15,7 @@ import time
 import pytest
 
 from see.live import CommandAgent, LiveQuestion
-from see.toy import make_task
+from see.toy import PROGRAM, make_task
 
 # Stands in for an agent CLI that forks work and waits for it. ``$0`` is the pid-file directory
 # (``{dir}`` below); ``{prompt}`` is substituted by CommandAgent and ignored by the script. The
@@ -40,7 +40,8 @@ def grandchild_pids(pid_dir) -> list:
 
 def test_agent_timeout_kills_the_whole_process_group(tmp_path, stub_prompts, process_gone):
     """A timed-out agent and everything it forked are dead when the call returns; through
-    LiveQuestion the attempt is scored as the program the agent left, with agent_timed_out set."""
+    LiveQuestion the attempt is scored as the program the agent left but recorded as the
+    `timeout` failure it is, never as a valid non-improving attempt."""
     pid_dir = tmp_path / "pids"
     pid_dir.mkdir()
     agent = CommandAgent(stand_in(pid_dir), timeout=0.3, kill_grace=0.2)
@@ -68,13 +69,44 @@ def test_agent_timeout_kills_the_whole_process_group(tmp_path, stub_prompts, pro
         refine_count=0,
     )
     [obs] = q.probe_batch(q.legal_roots())
-    # the stand-in never touched the program, so the parent's copy (x=1.0) is what gets scored
-    assert (obs.cell_id, obs.score, obs.evaluated, obs.fail_class) == ("b0a0", 1.0, True, "ok")
-    with open(tree / "attempt_b000_a000" / "eval" / "score.json") as f:
+    # the stand-in never touched the program, so the parent's copy (x=1.0) is what gets scored,
+    # but the attempt is a timeout failure: not a success, and it never raises the ceiling
+    assert (obs.cell_id, obs.score, obs.evaluated, obs.fail_class) == ("b0a0", 1.0, True, "timeout")
+    assert obs.error == "agent timed out after 0.3s"
+    assert obs.delta_vs_parent is None and obs.delta_vs_baseline is None  # not a success
+    node = tree / "attempt_b000_a000"
+    with open(node / "eval" / "score.json") as f:
         score = json.load(f)
     assert score["agent_timed_out"] is True and score["agent_returncode"] is None
+    assert score["fail_class"] == "timeout" and score["combined_score"] == 1.0
+    assert (node / "error.txt").read_text() == "agent timed out after 0.3s"
     pids = grandchild_pids(pid_dir)
     assert len(pids) == 2 and all(process_gone(p) for p in pids)
+
+
+def test_a_timed_out_agent_that_left_a_broken_program_keeps_the_evaluators_verdict(tmp_path):
+    """When the evaluator itself rejects what a timed-out agent left, its error and class win:
+    the program is broken either way, and score.json's agent_timed_out keeps the cause."""
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    target = tree / "attempt_b000_a000" / PROGRAM
+    writes_then_hangs = ["sh", "-c", 'printf "{broken" > "$0"; sleep 30', str(target), "{prompt}"]
+    agent = CommandAgent(writes_then_hangs, timeout=0.3, kill_grace=0.2)
+    q = LiveQuestion(
+        make_task(str(tmp_path)),
+        agent,
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=1,
+        branch_count=1,
+        refine_count=0,
+    )
+    [obs] = q.probe_batch(q.legal_roots())
+    assert obs.fail_class == "code" and obs.evaluated and obs.score == 0.0
+    assert obs.error is not None and obs.error.startswith("ValueError: unreadable solution")
+    with open(tree / "attempt_b000_a000" / "eval" / "score.json") as f:
+        assert json.load(f)["agent_timed_out"] is True
 
 
 class _Interrupted(BaseException):

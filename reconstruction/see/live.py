@@ -366,6 +366,10 @@ class LiveQuestion(Question):
         else:
             result = self._evaluate(program)
         error = result.get("error")
+        if run and run.get("timed_out") and not error:
+            # the agent was killed at its timeout: what it left is scored, but the attempt is
+            # the failure the taxonomy already names (classify_failure maps this text to timeout)
+            error = run["stderr"]
         fail_class = "no_program" if result.get("no_program") else classify_failure(error)
         score = oriented_score(t, result)
         os.makedirs(os.path.join(node, "eval"), exist_ok=True)

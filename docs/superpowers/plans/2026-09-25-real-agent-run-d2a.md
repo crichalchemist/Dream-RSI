@@ -41,15 +41,20 @@ No loop, scoring or policy-API code changes.
   - **never add a `Co-Authored-By:` line, or any other line naming an agent, to a commit message.**
 - SimpleTES is AGPL and stays unvendored. No attempt program (a modified SimpleTES seed) ever enters the repository, and neither does anything under `generated/`.
 - Symbol work goes through Serena first (`.claude/CLAUDE.md`, "Code navigation: Serena first"). Load the `mcp__serena__*` tools via ToolSearch; their paths are relative to the repo root.
-- Tasks 4 and 5 spend host CPU and API budget. The controller runs them itself, never a subagent, and each starts only after the owner's explicit go.
+- Tasks 4, 5 and 6 are run by the controller (the session) itself, never dispatched to a subagent:
+  - Task 4 spends host CPU and Task 5 spends API budget; each starts only after the owner's explicit go.
+  - Task 6 has an owner decision in the middle (the evidence scan).
+  - Tasks 4 and 6 each end in a commit that gets its task review.
+  - Task 5 changes nothing in the repository: it closes with a ledger entry and no task review.
 - Test names state the claim or outcome they protect. Tests that run the loop request the `stub_prompts` fixture.
 
 ## Rulings made while planning
 
 Each ruling is recorded in the spec's new section 11, in this plan's commit.
 
-1. **The workdir lives outside the repository**, at `/Users/controlroom/dream-rsi-runs/d2a-lasso`.
-   - Why: the discovery agent has a shell (`--yolo`). Under `reconstruction/runs/` it could reach `generated/lasso_path_dream_rsi.py` (the paper's final answer), tracked files, and this repo's `.gemini/GEMINI.md`.
+1. **The workdir lives outside the repository and outside the home directory**, at `/Users/Shared/dream-rsi-runs/d2a-lasso`. The run directory is `chmod 700`, because it holds a copy of the Gemini login.
+   - Why outside the repository: the discovery agent has a shell (`--yolo`). Under `reconstruction/runs/` it could reach `generated/lasso_path_dream_rsi.py` (the paper's final answer), tracked files, and this repo's `.gemini/GEMINI.md`.
+   - Why outside the home directory: both CLIs read context files from the cwd's ancestors, and `/Users/controlroom/GEMINI.md` exists. `/Users/Shared`, `/Users` and `/` hold no such file, and the pre-flight re-checks that.
    - Cost if wrong: longer paths.
 2. **Both agents run isolated from the owner's global CLI configuration.** This is the owner's decision (2026-09-25).
    - Why: the owner's Gemini settings disable yolo mode and load the superpowers and context-mode extensions and hooks. The owner's Claude setup loads a global CLAUDE.md, plugins, and hooks that write into the owner's notes. A headless call cannot pass an approval gate, so an attempt could end with its program untouched, which is exactly the count D2a measures.
@@ -63,7 +68,7 @@ Each ruling is recorded in the spec's new section 11, in this plan's commit.
 5. **The evidence subset gains `launches.jsonl` and each version's `policy_execution_traces.jsonl`.** The latter is the per-episode source of the out-of-support and empty-batch counts; `beta_sweep.json` keeps only three errors and one `any()` flag.
    - `report_run.py --copy-evidence` copies the subset to `evidence/d2a-lasso/workdir/` and withholds any file that quotes `CPP_CODE` (a pasted program).
    - `reconstruction/evidence/` is excluded from ruff and from the whitespace hooks, so evidence stays byte for byte as written.
-6. **A restart moves the guard-named directories aside** to `/Users/controlroom/dream-rsi-runs/d2a-lasso-restart1/`, keeping their relative paths, instead of deleting them. The partial iteration is evidence too. The loop never sees the moved directories again, so nothing is merged.
+6. **A restart moves the guard-named directories aside** to `/Users/Shared/dream-rsi-runs/d2a-lasso-restart1/`, keeping their relative paths, instead of deleting them. The partial iteration is evidence too. The loop never sees the moved directories again, so nothing is merged.
 7. **The report's test run uses a 2 x 1 fallback grid**: two branches of two attempts, reading the spec's "2 x 2" as cells. Its hard caps are 3 x 2, so the wider version asks for 3 x 1.
 
 ## File structure
@@ -591,11 +596,13 @@ def test_the_eigen_version_is_read_from_the_headers_the_run_compiles_with(tmp_pa
     assert runner.eigen_version(str(tmp_path)) is None  # no headers there: say so, do not guess
 
 
-def test_the_host_facts_name_the_simpletes_checkout_commit():
+def test_the_host_facts_name_the_simpletes_checkout_commit(tmp_path):
+    """This repository stands in for a SimpleTES clone; a directory outside any clone has none."""
     head = subprocess.run(
         ["git", "-C", RECON, "rev-parse", "HEAD"], capture_output=True, text=True, check=True
     ).stdout.strip()
     assert runner.host_facts(RECON, None)["simpletes_commit"] == head
+    assert runner.host_facts(str(tmp_path), None)["simpletes_commit"] is None
 
 
 def test_a_restart_appends_its_launch_and_keeps_the_first(tmp_path):
@@ -1884,7 +1891,7 @@ git commit -F /tmp/d2a-t3-msg.txt
 
 **Files:**
 - Create: `reconstruction/evidence/d2a-lasso/host.json`
-- Outside the repo: `../SimpleTES` (gitignored as `SimpleTES/` at the repo root) and `/Users/controlroom/dream-rsi-runs/smoke.log`
+- Outside the repo: `../SimpleTES` (gitignored as `SimpleTES/` at the repo root) and `/Users/Shared/dream-rsi-runs/smoke.log`
 
 **Interfaces:**
 - Consumes: Task 1's `verify_lasso.py --eigen-include`.
@@ -1894,16 +1901,16 @@ git commit -F /tmp/d2a-t3-msg.txt
 
 - [ ] **Step 2: Write the run's environment file, then check the compiler and the interpreter**
 
-Each Bash tool call starts a fresh shell, so every later command in Tasks 4–6 begins with `. /Users/controlroom/dream-rsi-runs/env.sh`. MacPorts must come first on `PATH` and the venv is activated after it, so `python` stays the venv's while `g++` resolves to MacPorts gcc.
+Each Bash tool call starts a fresh shell, so every later command in Tasks 4–6 begins with `. /Users/Shared/dream-rsi-runs/env.sh`. MacPorts must come first on `PATH` and the venv is activated after it, so `python` stays the venv's while `g++` resolves to MacPorts gcc.
 
 ```bash
-mkdir -p /Users/controlroom/dream-rsi-runs
-cat > /Users/controlroom/dream-rsi-runs/env.sh <<'EOF'
+mkdir -p /Users/Shared/dream-rsi-runs && chmod 700 /Users/Shared/dream-rsi-runs
+cat > /Users/Shared/dream-rsi-runs/env.sh <<'EOF'
 export PATH=/opt/local/bin:$PATH
 cd /Users/controlroom/Dream-RSI/reconstruction && . .venv/bin/activate
-R=/Users/controlroom/dream-rsi-runs
+R=/Users/Shared/dream-rsi-runs
 EOF
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
 command -v python           # expected: /Users/controlroom/Dream-RSI/reconstruction/.venv/bin/python
 command -v g++              # expected: /opt/local/bin/g++
 g++ --version | head -1     # expected: g++ (MacPorts gcc13 13.4.0_1+stdlib_flag) 13.4.0
@@ -1914,7 +1921,7 @@ g++ --version | head -1     # expected: g++ (MacPorts gcc13 13.4.0_1+stdlib_flag
 - [ ] **Step 3: Clone SimpleTES and record its commit**
 
 ```bash
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
 git clone --depth 1 https://github.com/wq-will/SimpleTES ../SimpleTES
 git -C ../SimpleTES rev-parse HEAD      # write it into the SDD ledger
 git -C /Users/controlroom/Dream-RSI status --short   # expected: nothing (SimpleTES/ is ignored)
@@ -1923,19 +1930,19 @@ git -C /Users/controlroom/Dream-RSI status --short   # expected: nothing (Simple
 - [ ] **Step 4: Clear the evaluator's binary cache.** The evaluator caches binaries by the md5 of `CPP_CODE` alone. The compiler, flags and Eigen path are not part of the key, so a stale binary built elsewhere would be reused.
 
 ```bash
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
 rm -rf "$(python -c 'import tempfile; print(tempfile.gettempdir())')/lasso_path_cpp_cache"
 ```
 
-- [ ] **Step 5: Run the smoke test**
+- [ ] **Step 5: Run the smoke test.** It takes longer than the Bash tool's 600 s limit, so run it as a Bash call with `run_in_background: true`. The session is re-invoked when it exits.
 
 ```bash
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
 python tools/extract_listings.py --check
 mkdir -p evidence/d2a-lasso
 python scripts/verify_lasso.py --simpletes ../SimpleTES --repeats 2 \
   --eigen-include /opt/local/include/eigen3 --json evidence/d2a-lasso/host.json \
-  2>&1 | tee /Users/controlroom/dream-rsi-runs/smoke.log
+  2>&1 | tee /Users/Shared/dream-rsi-runs/smoke.log
 ```
 
 Expected:
@@ -1948,7 +1955,7 @@ Stop condition: any row below `17/17`, or any `ERROR`. A compile failure names t
 - [ ] **Step 6: Record the noise in the ledger**
 
 ```bash
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
 python -c "
 from see.loader import load_module_from_path
 r = load_module_from_path('rr', 'scripts/report_run.py')
@@ -1960,7 +1967,7 @@ for name, n in r.noise('evidence/d2a-lasso/host.json').items():
 - [ ] **Step 7: Check the file for home paths, then commit**
 
 ```bash
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
 grep -c '/Users/' evidence/d2a-lasso/host.json   # expected: 0; if not, show the owner the hits first
 git diff --stat; git status --short              # only evidence/d2a-lasso/host.json is new
 cat > /tmp/d2a-t4-msg.txt <<'EOF'
@@ -1979,7 +1986,7 @@ git commit -F /tmp/d2a-t4-msg.txt
 
 ### Task 5: The run (controller only; owner's go; spends API budget)
 
-**Files:** none in the repository. Outside it, under `/Users/controlroom/dream-rsi-runs/` (called `R` below): `gemini-home/`, `discovery.json`, `policy.json`, `preflight/`, `d2a-lasso/` (the workdir), `d2a-lasso.log`, `d2a-lasso.pid` and `d2a-lasso.tar.gz`. It may also hold `d2a-lasso-restart1/`.
+**Files:** none in the repository. Outside it, under `/Users/Shared/dream-rsi-runs/` (called `R` below): `gemini-home/`, `discovery.json`, `policy.json`, `preflight/`, `d2a-lasso/` (the workdir), `d2a-lasso.log`, `d2a-lasso.pid` and `d2a-lasso.tar.gz`. It may also hold `d2a-lasso-restart1/`.
 
 **Interfaces:**
 - Consumes: Tasks 1–4 (`--eigen-include`, `launches.jsonl`, `report_run.py`, the clone). Task 4's `PATH` and venv must be in place.
@@ -1995,13 +2002,13 @@ git commit -F /tmp/d2a-t4-msg.txt
 - [ ] **Step 2: Build the isolated Gemini home.** It holds only the login files, the owner's auth type and billing choice, and trust for `R`.
 
 ```bash
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
 mkdir -p $R/gemini-home/.gemini
 cp ~/.gemini/oauth_creds.json ~/.gemini/google_accounts.json $R/gemini-home/.gemini/
 chmod 600 $R/gemini-home/.gemini/oauth_creds.json
 python3 - <<'EOF'
 import json
-R = "/Users/controlroom/dream-rsi-runs"
+R = "/Users/Shared/dream-rsi-runs"
 with open("/Users/controlroom/.gemini/settings.json") as f:
     owner = json.load(f)
 settings = {"security": {"auth": {"selectedType": owner["security"]["auth"]["selectedType"]}}}
@@ -2019,7 +2026,7 @@ EOF
   - Policy: `--add-dir` opens `trace_pool/`, which Listing 2 sends it to read from `policy_dev/`.
 
 ```bash
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
 cat > $R/discovery.json <<EOF
 ["env", "HOME=$R/gemini-home", "gemini", "--model", "auto-gemini-2.5", "--yolo", "--include-directories", "$R/d2a-lasso", "--prompt", "{prompt}"]
 EOF
@@ -2034,7 +2041,7 @@ python3 -c "import json; [json.load(open('$R/' + f)) for f in ('discovery.json',
 The session's shell is zsh, which does not word-split variables, so the pre-flight and the launch are bash scripts. Both unset this session's `CLAUDE*` variables (among them `CLAUDECODE`) with an `env -u` array, so the nested `claude -p` starts as a top-level session.
 
 ```bash
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
 cat > $R/strip.sh <<'EOF'
 # bash: STRIP=(-u NAME ...) for every CLAUDE* variable this shell inherited
 STRIP=()
@@ -2042,7 +2049,7 @@ for v in $(env | sed -n 's/^\(CLAUDE[A-Za-z0-9_]*\)=.*/\1/p'); do STRIP+=(-u "$v
 EOF
 cat > $R/preflight.sh <<'EOF'
 #!/bin/bash
-. /Users/controlroom/dream-rsi-runs/env.sh && . $R/strip.sh
+. /Users/Shared/dream-rsi-runs/env.sh && . $R/strip.sh
 P=$R/preflight; rm -rf $P
 mkdir -p $P/tree/attempt_b000_a000 $P/task/baseline $P/policy_dev $P/trace_pool
 echo seed-line-7 > $P/task/baseline/seed.txt; echo pool-line-3 > $P/trace_pool/note.txt
@@ -2050,7 +2057,12 @@ echo seed-line-7 > $P/task/baseline/seed.txt; echo pool-line-3 > $P/trace_pool/n
   --include-directories $P --prompt "Read $P/task/baseline/seed.txt and write its first line, \
 and nothing else, to $P/tree/attempt_b000_a000/out.txt. Then reply DONE.")
 echo "discovery out: $(cat $P/tree/attempt_b000_a000/out.txt 2>&1)"
-echo "extensions:"; env HOME=$R/gemini-home gemini -l
+echo "extensions:"; (cd $P/tree && env HOME=$R/gemini-home gemini -l)
+echo "ancestor context files:"
+d=$R/d2a-lasso
+while [ "$d" != "/" ]; do d=$(dirname "$d")
+  for f in CLAUDE.md CLAUDE.local.md GEMINI.md AGENTS.md .claude/CLAUDE.md .gemini/GEMINI.md; do
+    [ -e "$d/$f" ] && echo "  $d/$f"; done; done
 (cd $P/policy_dev && env "${STRIP[@]}" claude -p "Read $P/trace_pool/note.txt and write its first \
 line, and nothing else, to ./out.txt. Then answer with one word: does your context contain the \
 phrase 'Rule 14'? Answer RULE14 or NONE." --permission-mode acceptEdits \
@@ -2061,7 +2073,7 @@ EOF
 bash $R/preflight.sh
 ```
 
-Expected: `discovery out: seed-line-7`, no extension listed under `extensions:`, Claude's reply `NONE`, `policy out: pool-line-3`, and `remember dirs:` followed by nothing (no user hook ran in that cwd).
+Expected: `discovery out: seed-line-7`; no extension listed under `extensions:`; nothing listed under `ancestor context files:`; Claude's reply `NONE`; `policy out: pool-line-3`; and `remember dirs:` followed by nothing (no user hook ran in that cwd).
 
 The pre-flight passes when all of these hold:
 - both `out.txt` files hold their expected line;
@@ -2070,7 +2082,7 @@ The pre-flight passes when all of these hold:
 - the `ls` prints nothing.
 
 If Claude answers `RULE14`, or a `~/.remember/*preflight*` directory appears, the user configuration still loads. Then:
-1. Ask the owner to log in once, with `! CLAUDE_CONFIG_DIR=/Users/controlroom/dream-rsi-runs/claude-home claude`, then `/login` and exit.
+1. Ask the owner to log in once, with `! CLAUDE_CONFIG_DIR=/Users/Shared/dream-rsi-runs/claude-home claude`, then `/login` and exit.
 2. Rewrite `$R/policy.json` as `["env", "CLAUDE_CONFIG_DIR=$R/claude-home", "claude", "-p", "{prompt}", "--permission-mode", "acceptEdits", "--add-dir", "$R/d2a-lasso/trace_pool"]`.
 3. Repeat the Claude half of the pre-flight with that argv.
 
@@ -2079,12 +2091,13 @@ Any other failure (auth, a missing file, a refused write) means stop and report;
 - [ ] **Step 5: Launch detached, so the run survives this session**
 
 ```bash
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
 cat > $R/launch.sh <<'EOF'
 #!/bin/bash
-. /Users/controlroom/dream-rsi-runs/env.sh && . $R/strip.sh
+. /Users/Shared/dream-rsi-runs/env.sh && . $R/strip.sh
 rm -rf "$(python -c 'import tempfile; print(tempfile.gettempdir())')/lasso_path_cpp_cache"
-nohup env "${STRIP[@]}" python scripts/run_dream_rsi.py \
+nohup python -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+  env "${STRIP[@]}" python scripts/run_dream_rsi.py \
   --simpletes /Users/controlroom/Dream-RSI/SimpleTES --task lasso_path --workdir $R/d2a-lasso \
   --discovery-agent "$(cat $R/discovery.json)" --policy-agent "$(cat $R/policy.json)" \
   --iterations 2 --versions 3 --workers 4 --grid 4 3 --hard-max 6 4 --agent-timeout 900 \
@@ -2094,12 +2107,14 @@ EOF
 bash $R/launch.sh; cat $R/d2a-lasso.pid
 ```
 
-`nohup` leaves SIGHUP ignored, and the runner keeps it ignored (`install_signal_handlers`). SIGTERM to the pid freezes a partial iteration.
+`nohup` leaves SIGHUP ignored, and the runner keeps it ignored (`install_signal_handlers`). The `setsid` wrapper `exec`s into the runner in a session of its own. The pid file therefore names the runner itself, and nothing that ends this session's process group reaches the run. A spike confirmed both: the process leads its own group, and it survives the Bash call that started it. SIGTERM to the pid freezes a partial iteration.
 
-- [ ] **Step 6: Check the start within two minutes**
+- [ ] **Step 6: Check the start, then record the task tree's hashes**
+
+`launches.jsonl` appears within seconds. `baseline_eval.json` follows after one full Lasso evaluation, about as long as one smoke-test run. `runs/iter0001/tree/` appears only after that.
 
 ```bash
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
 python3 -c "
 import json
 l = json.loads(open('$R/d2a-lasso/launches.jsonl').readlines()[-1])
@@ -2107,22 +2122,25 @@ print(l['config']['fallback_grid'], l['config']['hard_max_grid'], l['task']['eva
 print(l['agents']['discovery']['version'], '|', l['agents']['policy']['version'])
 print(l['host']['compiler'], '|', l['host']['eigen'], '|', l['host']['simpletes_commit'])
 "
-ls $R/d2a-lasso/runs/iter0001/tree | head
+cd $R/d2a-lasso && find task -type f -print0 | sort -z | xargs -0 shasum -a 256 > $R/task.sha256
+wc -l < $R/task.sha256    # the adapter's copy of the task (task/src/eigen is a symlink, not hashed)
 ```
+
+Once `$R/d2a-lasso/baseline_eval.json` exists, `ls $R/d2a-lasso/runs/iter0001/tree | head` should list `attempt_b000_a000` and its neighbours. The discovery agent's file tools can write anywhere in the workdir. `task.sha256` therefore lets Task 6 prove that the baseline and the task files every "source: baseline" comparison depends on were not edited during the run.
 
 Expected:
 - `[4, 3] [6, 4] init_program.py`;
 - two non-empty CLI versions;
 - `g++ (MacPorts gcc13 13.4.0_1+stdlib_flag) 13.4.0 | 3.4.1 | <the Task 4 commit>`;
-- `attempt_b000_a000` … once the first batch has started.
+- a hash count of at least 4: `evaluator.py`, `init_program.py` and the statement file under `task/src/`, plus `task/baseline/init_program.py`.
 
 A `None` compiler or Eigen means the environment is wrong. Stop the run with `kill -TERM $(cat $R/d2a-lasso.pid)` and fix the environment. The iteration is then partial; handle it as in Step 8.
 
 - [ ] **Step 7: Wait for the exit.** Use a background wait, which re-invokes the session when the run ends: Bash with `run_in_background: true` running
 
 ```bash
-while kill -0 $(cat /Users/controlroom/dream-rsi-runs/d2a-lasso.pid) 2>/dev/null; do sleep 60; done
-tail -40 /Users/controlroom/dream-rsi-runs/d2a-lasso.log
+while kill -0 $(cat /Users/Shared/dream-rsi-runs/d2a-lasso.pid) 2>/dev/null; do sleep 60; done
+tail -40 /Users/Shared/dream-rsi-runs/d2a-lasso.log
 ```
 
 While waiting, look at progress only when the owner asks. Progress means counting `eval/score.json` files, and reading any `error.txt`. The exception is quota: if consecutive attempts' `error.txt` mention a quota (`429`, `RESOURCE_EXHAUSTED`, `quota`), stop the run with `kill -TERM` and tell the owner. The run is not retried into a broken quota.
@@ -2134,10 +2152,10 @@ While waiting, look at progress only when the owner asks. Progress means countin
     2. Move aside exactly the directories `online()`'s guard names (`see/loop.py`, lines 157–163), keeping their relative paths. Copy `task/`, `launches.jsonl` and `state.json` beside them, so Task 6 can report on the aside directory as a workdir of its own:
 
        ```bash
-       . /Users/controlroom/dream-rsi-runs/env.sh
+       . /Users/Shared/dream-rsi-runs/env.sh
        python3 - <<'EOF'
        import glob, json, os, shutil
-       R = "/Users/controlroom/dream-rsi-runs"
+       R = "/Users/Shared/dream-rsi-runs"
        w, aside = f"{R}/d2a-lasso", f"{R}/d2a-lasso-restart1"
        with open(f"{w}/state.json") as f:
            t = json.load(f)["iteration"] + 1
@@ -2161,7 +2179,7 @@ While waiting, look at progress only when the owner asks. Progress means countin
 - [ ] **Step 9: Archive the workdir**
 
 ```bash
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
 tar -czf $R/d2a-lasso.tar.gz -C $R d2a-lasso
 [ -d $R/d2a-lasso-restart1 ] && tar -czf $R/d2a-lasso-restart1.tar.gz -C $R d2a-lasso-restart1
 shasum -a 256 $R/d2a-lasso*.tar.gz      # into the ledger; the report recomputes the first
@@ -2171,7 +2189,7 @@ No commit: the repository did not change.
 
 ---
 
-### Task 6: Report, evidence, ledger and docs
+### Task 6: Report, evidence, ledger and docs (controller only; owner decision at Step 3)
 
 **Files:**
 - Create: `reconstruction/evidence/d2a-lasso/report.md`, `report.json`, `workdir/…` (copied by the script)
@@ -2182,15 +2200,16 @@ No commit: the repository did not change.
 - Consumes: Task 5's workdir and archive, Task 4's `host.json`, and Task 3's `report_run.py`.
 - Produces: the committed evidence and the ledger's headline numbers. D2b opens on `evidence/d2a-lasso/report.json`.
 
-- [ ] **Step 1: Write the report and copy the evidence**
+- [ ] **Step 1: Check the task tree, then write the report and copy the evidence**
 
 ```bash
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
+(cd $R/d2a-lasso && shasum -a 256 -c --quiet $R/task.sha256) && echo "task tree unchanged"
 python scripts/report_run.py --workdir $R/d2a-lasso --out evidence/d2a-lasso \
   --host-json evidence/d2a-lasso/host.json --archive $R/d2a-lasso.tar.gz --copy-evidence
 ```
 
-Expected: it prints `evidence/d2a-lasso/report.md`. If Task 5 restarted, report on the aside directory too. It is a self-contained workdir (Task 5, Step 8):
+Expected: `task tree unchanged`, then `evidence/d2a-lasso/report.md`. If any task file changed, an agent edited the task mid-run. Stop and show the owner the changed files before reporting: every comparison against the baseline depends on them. If Task 5 restarted, report on the aside directory too. It is a self-contained workdir (Task 5, Step 8):
 
 ```bash
 python scripts/report_run.py --workdir $R/d2a-lasso-restart1 --out evidence/d2a-lasso/restart1 \
@@ -2200,7 +2219,7 @@ python scripts/report_run.py --workdir $R/d2a-lasso-restart1 --out evidence/d2a-
 - [ ] **Step 2: Scan the evidence before anything is staged**
 
 ```bash
-. /Users/controlroom/dream-rsi-runs/env.sh
+. /Users/Shared/dream-rsi-runs/env.sh
 python3 - <<'EOF'
 import os, subprocess
 root = "evidence/d2a-lasso"

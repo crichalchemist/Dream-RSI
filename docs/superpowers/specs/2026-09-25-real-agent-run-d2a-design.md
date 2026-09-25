@@ -97,7 +97,7 @@ From `reconstruction/` in its venv, after `git clone --depth 1 https://github.co
 
 ```
 python scripts/run_dream_rsi.py --simpletes /Users/controlroom/Dream-RSI/SimpleTES \
-    --task lasso_path --workdir /Users/controlroom/dream-rsi-runs/d2a-lasso \
+    --task lasso_path --workdir /Users/Shared/dream-rsi-runs/d2a-lasso \
     --discovery-agent "$(cat discovery.json)" --policy-agent "$(cat policy.json)" \
     --iterations 2 --versions 3 --workers 4 --grid 4 3 --hard-max 6 4 \
     --agent-timeout 900 --eigen-include /opt/local/include/eigen3
@@ -105,7 +105,8 @@ python scripts/run_dream_rsi.py --simpletes /Users/controlroom/Dream-RSI/SimpleT
 
 (Amended while planning, section 11: the workdir is outside the repository, and the two agents
 are isolated JSON argv. The plan's Task 5 builds `discovery.json` and `policy.json`, proves them
-with a one-call pre-flight each, and launches the run detached under `nohup`.)
+with a one-call pre-flight each, and launches the run detached under `nohup`, in a session of
+its own.)
 
 - **Grid and caps.** Fallback 4 x 3 (16 attempts per round). The hard caps are 6 x 4 rather than
   the default 32 x 19: no budget cap exists yet, so the caps are the only bound on what a
@@ -215,10 +216,13 @@ The plan (`docs/superpowers/plans/2026-09-25-real-agent-run-d2a.md`) was written
 Every code block in it was run in a throwaway worktree first. These changes came out of that
 spike, and each overrides the section it names.
 
-1. **Workdir outside the repository** (section 4): `/Users/controlroom/dream-rsi-runs/d2a-lasso`.
-   The discovery agent has a shell. Inside `reconstruction/runs/` it could read
-   `generated/lasso_path_dream_rsi.py` (the paper's final answer), edit tracked files, and load
-   this repository's `.gemini/GEMINI.md`.
+1. **Workdir outside the repository and the home directory** (section 4):
+   `/Users/Shared/dream-rsi-runs/d2a-lasso`, with the run directory `chmod 700`.
+   - The discovery agent has a shell. Inside `reconstruction/runs/` it could read
+     `generated/lasso_path_dream_rsi.py` (the paper's final answer), edit tracked files, and load
+     this repository's `.gemini/GEMINI.md`.
+   - Both CLIs read context files from the cwd's ancestors, and `/Users/controlroom/GEMINI.md`
+     exists; `/Users/Shared`'s ancestors hold none.
 2. **Isolated agents** (section 1, **Decision (owner, 2026-09-25)**).
    - Why:
      - The owner's Gemini settings disable yolo mode, and they load the superpowers and
@@ -240,7 +244,12 @@ spike, and each overrides the section it names.
    - Both are JSON argv; no code change.
    - The launch environment unsets the controlling session's `CLAUDE*` variables.
    - The pre-flight is one call per agent. It must show that the agent authenticates, reads
-     outside its cwd, writes a file, loads no extension, and fires no user hook.
+     outside its cwd, writes a file, loads no extension, and fires no user hook, and that no
+     ancestor of the workdir holds a context file.
+   - The launch `exec`s the runner through `setsid`, so ending this session cannot take the run
+     with it.
+   - The discovery agent's file tools can write anywhere in the workdir. So the task tree
+     (`task/`, the baseline included) is hashed after launch and re-checked before the report.
 3. **Launch record** (sections 5 and 9, new Task 2). The runner appends one line per launch to
    `<workdir>/launches.jsonl`, before the first iteration. The line holds:
    - the caps and the program's file name, which no manifest carries;
@@ -262,10 +271,11 @@ spike, and each overrides the section it names.
    pasted programs, quoted source, home paths, the owner's email address and files over
    500 KB. What to redact is the owner's call.
 6. **Restart** (section 4). The guard-named directories are moved aside to
-   `/Users/controlroom/dream-rsi-runs/d2a-lasso-restart1/`, with `task/`, `launches.jsonl` and
+   `/Users/Shared/dream-rsi-runs/d2a-lasso-restart1/`, with `task/`, `launches.jsonl` and
    `state.json` copied beside them, instead of being deleted. The partial iteration is evidence
    too, and it is reported as a workdir of its own.
 7. **The report's test run** (section 5): a 2 x 1 fallback grid and 3 x 2 hard caps. The wider
    policy version asks for 3 x 1.
-8. **Controller-run tasks** (section 9). The smoke test and the run are run by the session
-   itself, never by a subagent, and each needs the owner's go.
+8. **Controller-run tasks** (section 9). The smoke test, the run and the evidence commit are
+   run by the session itself, never by a subagent. The first two need the owner's go, and the
+   third has the owner's redaction decision in the middle.

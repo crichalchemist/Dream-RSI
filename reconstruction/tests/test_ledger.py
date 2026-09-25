@@ -4,6 +4,7 @@ Each test is a hand-computed case for one ruling, named for the claim it protect
 ledger cannot drift from the code without a test going red.
 """
 
+import json
 import os
 
 import pytest
@@ -140,7 +141,10 @@ def test_the_floor_is_reswept_for_reference_and_never_deployed(tmp_path, stub_pr
     loop.online(1)
     loop.offline(1)
     floor = tmp_path / "policy_dev" / "history" / "baseline" / "proposal_results"
-    assert (floor / "beta_sweep.json").exists()
+    with open(floor / "beta_sweep.json") as f:
+        report = json.load(f)
+    # re-swept on the current pool: a valid sweep of pi_1 over the one recorded tree
+    assert (report["valid"], report["policy"], report["n_traces"]) == (True, "ParallelRefine", 1)
     rounds = [c["round"] for c in loop.state["log"][-1]["offline"]]
     assert rounds == ["r0001_t01_m0", "r0002_t01_m1"]
     assert loop.state["deployed_round"] in rounds

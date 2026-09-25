@@ -24,7 +24,7 @@ pip install -e ".[extract,lasso,dev]" # lasso: pyright needs numpy/scikit-learn 
 pre-commit install                    # once per clone; ruff, ruff-format, pyright run on every commit
 python tools/extract_listings.py      # PREREQUISITE: writes generated/ (2 prompts + Lasso solver)
 python tools/extract_listings.py --check   # digest drift vs tools/generated.sha256; exit 1 on drift
-python -m pytest -q                   # whole suite, ~11s; exact count pinned in .github/workflows/ci.yml
+python -m pytest -q                   # whole suite, ~12s; exact count pinned in .github/workflows/ci.yml
 python -m pytest -q tests/test_loop.py::test_on_policy_replay_reproduces_the_live_episode
 python -m see demo --workdir /tmp/drsi                                          # whole loop, toy task, ~8s
 python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tmp/sweep

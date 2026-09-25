@@ -183,9 +183,10 @@ subprocess and propagates; `offline()` persists nothing, and §6's guard handles
 
 ## 8. Tests (55 → 62 collected; suite about 8 s)
 
-> The counts and timings in §§8–10 are as planned before execution. The branch shipped 68 tests
-> (the count is pinned only in `.github/workflows/ci.yml`) and the C2 follow-up added nine more;
-> the plan's execution rulings record what changed.
+> The counts and timings in §§8–12 are as planned before execution. The branch shipped 68 tests
+> (the count is pinned only in `.github/workflows/ci.yml`); the C2 follow-up added more and
+> shipped the load-time digest check and the sweep-vs-archive comparison that §12 lists as
+> deferred. The plan's execution rulings record what changed.
 
 Shell stand-in: `["sh", "-c", "sleep 30 & echo $! > \"$0/child-$$.pid\"; wait", "<dir>", "{prompt}"]`
 — forks a `sleep`, records the grandchild's pid, waits. The test reads the pid file and asserts the

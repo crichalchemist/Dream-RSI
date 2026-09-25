@@ -218,6 +218,8 @@ class DreamRSI:
                 q, partial, f"iter{t:04d}-partial", {"iteration": t, "partial": True}, manifest
             )
             raise
+        if error is None and q.fault is not None:  # the policy swallowed the batch's fault
+            error = f"batch abandoned: {q.fault}"
         manifest = self._manifest(t, policy, plan, grid, q, error, started)
         os.makedirs(out)
         self._freeze(q, out, f"iter{t:04d}", {"iteration": t}, manifest)

@@ -123,8 +123,9 @@ the one before `offline(1)`.
 `solve` returns normally with `q.fault` set, `online()` records
 `error = f"batch abandoned: {q.fault}"` in the manifest; the tree is frozen into the pool with that
 error, exactly as when the fault propagates. Test: a policy whose `solve` catches the batch's
-exception and returns; the host fault is the C2 test's (the attempt's `eval` path exists as a
-file); the manifest's error starts with "batch abandoned: FileExistsError" and `probes` is 0.
+exception and returns; the host fault is a missing prompt directory (`FileNotFoundError` raised
+by `exploration_prompt` in the worker before any agent call); the manifest's error starts with
+"batch abandoned: FileNotFoundError", `probes` is 0 and the agent was never called.
 
 ## 4. Rulings
 

@@ -293,6 +293,56 @@ def test_a_fault_while_recording_a_batch_keeps_none_of_it(tmp_path, stub_prompts
     assert seen == ["b0a0", "b1a0"] and q.cells == {}
 
 
+SWALLOWS = '''"""A policy that hides the batch's fault: for the manifest test only."""
+
+from see.policy.api import GridPlan, LLMDesignedMethod, SimResult, finalize_result
+
+NAME = "Swallows"
+
+
+class Swallows(LLMDesignedMethod):
+    NAME = NAME
+
+    def solve(self, question, budget=None):
+        question.reset()
+        try:
+            question.probe_batch(question.legal_roots())
+        except Exception:
+            pass
+        return finalize_result(question, SimResult())
+
+    def plan_grid(self, context):
+        return GridPlan(context.fallback_branch_count, context.fallback_refine_count, reason="t")
+'''
+
+
+def test_a_fault_the_policy_swallows_still_reaches_the_manifest(
+    tmp_path, stub_prompts, monkeypatch
+):
+    """A policy that catches the batch's exception and returns cannot produce a clean-looking
+    truncated cycle: the manifest names the fault, and the cycle is frozen with that error just
+    as when the fault propagates. The fault here is a missing prompt file, raised in the worker
+    before any agent call."""
+    policy = tmp_path / "swallows.py"
+    policy.write_text(SWALLOWS)
+    cfg = LoopConfig(
+        workdir=str(tmp_path),
+        max_parallelism=2,
+        fallback_grid=(2, 1),
+        hard_max_grid=(2, 1),
+        initial_policy=str(policy),
+    )
+    agent = _RecordingAgent()
+    loop = DreamRSI(cfg, make_task(str(tmp_path)), agent, ScriptedPolicyAgent())
+    monkeypatch.setattr(see.prompts, "GENERATED", str(tmp_path / "no-such-dir"))
+    manifest = loop.online(1)
+    assert manifest["error"] is not None
+    assert manifest["error"].startswith("batch abandoned: FileNotFoundError: ")
+    assert manifest["probes"] == 0 and agent.targets == []
+    with open(tmp_path / "trace_pool" / "iter0001" / "live_cycle_manifest.json") as f:
+        assert json.load(f)["error"] == manifest["error"]
+
+
 def test_state_is_written_once_per_iteration_after_the_deploy(tmp_path, stub_prompts, monkeypatch):
     """The deployed policy, its digest, the offline log and the iteration counter reach disk in
     one write at the end of offline(); online() writes nothing."""

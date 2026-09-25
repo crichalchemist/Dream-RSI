@@ -1233,3 +1233,53 @@ one case (SIGKILL) that can still orphan a sweep. The README status rows
 mention the new behaviour. The junit pin moves from 55 to 62, the only
 place the count is quoted."
 ```
+
+
+---
+
+## Execution rulings (2026-09-25)
+
+Recorded during subagent-driven execution; the spec was the binding authority. Where a ruling
+changed the code a task prints above, the committed code is the one described here.
+
+1. Task 5's `import time` goes where isort puts it; the "after `import shutil` once Task 6 adds
+   it" note was stale (Task 6 adds no `shutil`).
+2. `tests/test_loop.py` had 10 tests at the base, not 12: Task 4's file-level count is 11, Task
+   6's is 13. The suite-level chain was authoritative.
+3. Work happened in place on `spec/runtime-safety-c1` (a feature branch), as tracks A and B did.
+4. Implementers were resumable Agent dispatches with one reviewer each; the final whole-branch
+   review ran as a workflow with adversarial verification on the most capable model.
+5. Task 1's `p.communicate()` drain after the kill was removed (it blocks on a `setsid` escapee
+   holding the pipes and raises `UnicodeDecodeError` on a half-written multibyte character):
+   `CommandAgent._close_pipes(p)` closes the pipes instead, and the `finally` kills the group when
+   an exception escapes `communicate()` in the calling thread (a Ctrl-C during the main-thread
+   policy-agent call), which `subprocess.run` used to do. Two tests pin both behaviours
+   (`test_interrupt_during_an_agent_call_kills_its_process_group`,
+   `test_timeout_returns_even_when_an_escapee_holds_the_pipes`), so the count chain became
+   58, 59, 60, 61, 62, 63, 64 and the CI pin moved from 55 to 64. Task 2's `__call__` carries the
+   same two corrections.
+6. `.github/workflows/ci.yml` stayed at `--expect 55` until Task 8 moved it; the branch was not
+   pushed before then.
+7. Task 2's post-`communicate()` `_closed` check ran outside the lock, so a call that finished on
+   its own just before `terminate()` could be reported as terminated. `terminate()` now claims a
+   still-running call by removing its `Popen` from `_live` under the lock, skipping processes
+   whose `poll()` is not `None`, and a call reports terminated only if it was claimed. The window
+   is not pinned by a test (it cannot be hit deterministically without hooks).
+8. Task 3's "two workers over four roots, two queued" scenario is unreachable: `probe_batch`
+   caps a batch at `max_parallelism` and the pool has that many workers, so every attempt in a
+   batch is running. The test became `test_interrupt_kills_running_agents_and_records_nothing`
+   over a batch of two; `cancel_futures=True` and the entry guard in `_run_attempt` stay because a
+   submitted job can still be cancelled between `submit` and a worker dequeuing it. Spec §4's
+   "queued attempts never start" is vacuous for batches.
+9. After `_cancel` killed the agents, each worker went on to evaluate the killed attempt's
+   leftover program and wrote `eval/score.json`, so an interrupt waited for W serialized
+   evaluator runs. A second `_interrupted` check after the agent call raises instead; the test
+   triggers the interrupt from a helper thread once both stand-ins have forked (no timer) and
+   asserts no score file exists.
+10. Task 5's `Popen` sits before the `try`, so a failure to spawn the sweep subprocess (a host
+    error such as `EMFILE`) propagates instead of scoring the version invalid. Kept on purpose:
+    it describes the host, not the version, and a −∞ would misattribute it and skew the argmax.
+    Recorded in GAPS.md §3.
+
+Deferred minors from the task reviews are listed in the final review's triage (see the pull
+request), not here.

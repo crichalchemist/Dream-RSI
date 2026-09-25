@@ -94,13 +94,13 @@ prompts from `generated/`, which is why extraction is a prerequisite.
 - `LoopConfig.serialize_eval=True` by default: evaluations are serialized because timing-based
   tasks interfere with each other. Do not parallelize evaluation for Lasso or kernel tasks.
 - An interrupted iteration cannot be resumed: `online()` raises if `runs/iterNNNN/`,
-  `trace_pool/iterNNNN/` or the iteration's first archive `policy_dev/history/rNNNN_tNN_m0/`
+  `trace_pool/iterNNNN/` or any archive of the iteration `policy_dev/history/r*_tNN_m*/`
   already exists, naming every one that does. Ctrl-C, SIGTERM and SIGHUP (the entry points call
   `install_signal_handlers()`; a SIGHUP inherited ignored, as under nohup, stays ignored) kill the
   running agents' process groups and freeze what was collected under `runs/iterNNNN/partial/`,
   never into the pool; an interrupt before the first attempt (planning, baseline evaluation)
-  leaves nothing under `runs/`. To restart, delete the named directories and the aborted
-  iteration's other `policy_dev/history/r*_tNN_m*` entries — the round counter is persisted only
-  on success — and do not merge into them. After a SIGKILL of the parent, or any signal the entry
+  leaves nothing under `runs/`. To restart, delete exactly the named directories (the round
+  counter is persisted only on success, which is why the archives are named) and do not merge
+  into them. After a SIGKILL of the parent, or any signal the entry
   points do not map, which run no cleanup, check for a surviving `see sweep` process first.
 - `*.local.md` files are private maintainer notes and are gitignored.

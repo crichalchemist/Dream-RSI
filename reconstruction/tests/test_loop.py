@@ -426,6 +426,24 @@ def test_restart_refuses_when_the_first_archive_dir_exists(tmp_path, stub_prompt
     assert (tmp_path / "state.json").read_text() == state
 
 
+def test_restart_refuses_when_any_archive_of_the_iteration_exists(tmp_path, stub_prompts):
+    """An iteration runs once per workdir, so any policy_dev/history/r*_tNN_m* entry for it is a
+    leftover of an aborted or completed run, not only the r{round+1}_tNN_m0 a restart would
+    recreate: every one of them is named, whatever round or version number it carries."""
+    agent = _RecordingAgent()
+    loop = _interruptible_loop(str(tmp_path), agent)
+    history = tmp_path / "policy_dev" / "history"
+    for name in (archive_name(7, 1, 2), archive_name(1, 2, 0), "baseline"):  # only t01 matters
+        (history / name).mkdir(parents=True)
+    with pytest.raises(RuntimeError, match=r"history/r0007_t01_m2 exists: .*delete it"):
+        loop.online(1)
+    assert agent.targets == []
+    (history / archive_name(8, 1, 0)).mkdir()
+    with pytest.raises(RuntimeError, match=r"r0007_t01_m2 and .*r0008_t01_m0 exist: .*delete them"):
+        loop.online(1)
+    assert agent.targets == []
+
+
 def test_sigterm_takes_the_same_path_as_ctrl_c():
     """`kill <pid>` raises KeyboardInterrupt in the main thread, so a run freezes its partial
     tree and refuses on restart like Ctrl-C does, instead of exiting at once."""

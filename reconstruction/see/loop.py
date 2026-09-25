@@ -153,10 +153,11 @@ class DreamRSI:
         """Stage 1: the deployed policy drives discovery; the tree is frozen into the pool."""
         run_dir = os.path.join(self.w, "runs", f"iter{t:04d}")
         out = os.path.join(self.pool, f"iter{t:04d}")
-        # runs/ is created first and trace_pool/ last; the first archive is what a restart's
-        # offline() would recreate, because the round counter is persisted only on success
-        first_archive = os.path.join(self.dev_history, archive_name(self.state["round"] + 1, t, 0))
-        existing = [p for p in (run_dir, out, first_archive) if os.path.exists(p)]
+        # runs/ is created first and trace_pool/ last; any archive of this iteration means it ran
+        # once already, and a restart's offline() would recreate the first one (r{round+1}_tNN_m0),
+        # because the round counter is persisted only on success
+        archives = sorted(glob.glob(os.path.join(self.dev_history, f"r*_t{t:02d}_m*")))
+        existing = [p for p in (run_dir, out, *archives) if os.path.exists(p)]
         if existing:
             one = len(existing) == 1
             raise RuntimeError(

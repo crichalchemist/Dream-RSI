@@ -41,7 +41,9 @@ python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tm
   `gcc13` selected with `sudo port select --set gcc mp-gcc13`, and `eigen3` passed as
   `--eigen-include /opt/local/include/eigen3`). `scripts/verify_lasso.py` scores Listing 3
   with SimpleTES's evaluator; `scripts/run_dream_rsi.py` runs the loop with real coding agents and
-  spends real API budget (~110 discovery calls per round at the paper's default grid).
+  spends real API budget (~110 discovery calls per round at the paper's default grid); each
+  launch appends its caps, agent argv and CLI versions, and host toolchain to
+  `<workdir>/launches.jsonl`.
 
 ## Code navigation: Serena first
 

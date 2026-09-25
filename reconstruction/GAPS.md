@@ -44,7 +44,8 @@ Details: `tools/extract_listings.py`.
   ConvMax" but not their problem ids or levels, and the last two names match several
   KernelBench problems. The GPU model is not stated either.
 - **Gemini CLI** is the discovery agent. Its invocation flags, tools, timeouts and sampling
-  settings are not given.
+  settings are not given. `scripts/run_dream_rsi.py` records each launch's agent argv and CLI
+  version in `<workdir>/launches.jsonl`.
 
 ## 3. Reconstruction choices (the paper is silent)
 

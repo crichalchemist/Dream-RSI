@@ -391,11 +391,31 @@ def test_restart_refuses_when_the_first_archive_dir_exists(tmp_path, stub_prompt
 def test_sigterm_takes_the_same_path_as_ctrl_c():
     """`kill <pid>` raises KeyboardInterrupt in the main thread, so a run freezes its partial
     tree and refuses on restart like Ctrl-C does, instead of exiting at once."""
-    previous = signal.getsignal(signal.SIGTERM)
+    previous = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP)}
     try:
         install_signal_handlers()
         with pytest.raises(KeyboardInterrupt, match=r"signal 15"):
             os.kill(os.getpid(), signal.SIGTERM)
             time.sleep(0.5)  # the handler runs at the next bytecode boundary
     finally:
-        signal.signal(signal.SIGTERM, previous)
+        for s, handler in previous.items():
+            signal.signal(s, handler)
+
+
+def test_sighup_takes_the_same_path_as_ctrl_c_unless_inherited_ignored():
+    """A hangup (the terminal or SSH session going away) freezes and refuses like Ctrl-C, since
+    the agents and the sweep run in their own sessions and never see the hangup themselves; a run
+    launched under nohup, which ignores SIGHUP, keeps ignoring it."""
+    previous = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        signal.signal(signal.SIGHUP, signal.SIG_DFL)
+        install_signal_handlers()
+        with pytest.raises(KeyboardInterrupt, match=r"signal 1$"):
+            os.kill(os.getpid(), signal.SIGHUP)
+            time.sleep(0.5)  # the handler runs at the next bytecode boundary
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        install_signal_handlers()
+        assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
+    finally:
+        for s, handler in previous.items():
+            signal.signal(s, handler)

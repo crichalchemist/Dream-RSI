@@ -48,11 +48,14 @@ def archive_name(round_no: int, t: int, m: int) -> str:
 
 
 def install_signal_handlers() -> None:
-    """Make SIGTERM take the same path as Ctrl-C: raise KeyboardInterrupt in the main thread.
+    """Make SIGTERM and SIGHUP take the same path as Ctrl-C: raise KeyboardInterrupt in the main
+    thread. A SIGHUP that was inherited ignored (a nohup or setsid launch) stays ignored.
 
     Called by the CLI entry points only; a library must not change signal disposition on import.
     """
     signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+    if signal.getsignal(signal.SIGHUP) != signal.SIG_IGN:
+        signal.signal(signal.SIGHUP, _raise_keyboard_interrupt)
 
 
 def _raise_keyboard_interrupt(signum, frame):

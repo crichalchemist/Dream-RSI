@@ -149,9 +149,7 @@ class DreamRSI:
         for _ in range(iterations or self.c.iterations):
             t = self.state["iteration"] + 1
             self.online(t)
-            self.offline(t)
-            self.state["iteration"] = t
-            self._save_state()
+            self.offline(t)  # persists the counter together with what it deployed
         return self.state
 
     def online(self, t: int):
@@ -274,11 +272,15 @@ class DreamRSI:
             {k: c[k] for k in ("round", "m", "score", "valid", "sha256")} for c in candidates
         ]
         self.state["log"][-1]["selected"] = best["round"]
-        self._save_state()
+        self.state["iteration"] = t
+        self._save_state()  # the only write per iteration: deploy, digest, log and counter together
         return deployed
 
     def _deploy(self, t: int, record: dict) -> str:
-        """Copy the scored candidate to deployed/ as pi_{t+1}, refusing any changed bytes."""
+        """Copy the scored candidate to deployed/ as pi_{t+1}, refusing any changed bytes.
+
+        The state is persisted by offline() at its end, together with the iteration counter.
+        """
         with open(record["method"], "rb") as f:
             code = f.read()
         digest = hashlib.sha256(code).hexdigest()
@@ -292,7 +294,6 @@ class DreamRSI:
             f.write(code)  # the verified bytes, not a second read of the file
         self.state["deployed"], self.state["deployed_round"] = deployed, record["round"]
         self.state["deployed_sha256"] = digest
-        self._save_state()
         return deployed
 
     def _archive(self, method_path: str, t: int, m: int, agent_run=None) -> dict:

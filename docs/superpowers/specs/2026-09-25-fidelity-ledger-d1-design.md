@@ -185,7 +185,7 @@ fact-check reports are the source; every value is checked against the code by th
 New module `tests/test_ledger.py` (rulings 1, 4, 5, 6, 7, 8): one test per ruling, named for the
 claim it protects, hand-computed on the toy world. Extended existing tests: ruling 3 in
 `test_objective.py`; ruling 10 in `test_replay_equivalence.py`; the timed-out expectation in
-`test_command_agent.py`. Per fix (§3): two tests for 3.1, two for 3.2, three for 3.3, one for 3.4,
+`test_command_agent.py`. Per fix (§3): two tests for 3.1, two for 3.2, two for 3.3, one for 3.4,
 in the module that already covers that path. Estimated count 82 → about 96; the last task
 measures and pins it.
 

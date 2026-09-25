@@ -293,6 +293,52 @@ def test_a_fault_while_recording_a_batch_keeps_none_of_it(tmp_path, stub_prompts
     assert seen == ["b0a0", "b1a0"] and q.cells == {}
 
 
+def test_state_is_written_once_per_iteration_after_the_deploy(tmp_path, stub_prompts, monkeypatch):
+    """The deployed policy, its digest, the offline log and the iteration counter reach disk in
+    one write at the end of offline(); online() writes nothing."""
+    loop = _interruptible_loop(str(tmp_path), _RecordingAgent())
+    writes: list[str] = []
+    real_save = loop._save_state
+
+    def counting_save():
+        writes.append(json.dumps(loop.state))
+        real_save()
+
+    monkeypatch.setattr(loop, "_save_state", counting_save)
+    loop.online(1)
+    assert writes == []
+    loop.offline(1)
+    assert len(writes) == 1
+    with open(tmp_path / "state.json") as f:
+        state = json.load(f)
+    assert state["iteration"] == 1
+    assert state["deployed"].endswith("iter0002.py")
+    assert state["deployed_sha256"] == _sha256(state["deployed"])
+    assert set(state["log"][-1]) >= {"iteration", "live", "offline", "selected"}
+
+
+def test_a_crash_after_the_deploy_leaves_the_previous_state_on_disk(
+    tmp_path, stub_prompts, monkeypatch
+):
+    """offline() persists nothing until its end, so a crash between the deploy and that write
+    leaves state.json as the previous iteration left it (deployed/iter0001.py, iteration 0),
+    the state the restart guard assumes; deployed/iter0002.py exists but nothing points at it."""
+    loop = _interruptible_loop(str(tmp_path), _RecordingAgent())
+    loop.online(1)
+    before = (tmp_path / "state.json").read_text()
+    real_deploy = loop._deploy
+
+    def deploy_then_crash(t, record):
+        real_deploy(t, record)
+        raise RuntimeError("host fault right after the deploy")
+
+    monkeypatch.setattr(loop, "_deploy", deploy_then_crash)
+    with pytest.raises(RuntimeError, match=r"right after the deploy"):
+        loop.offline(1)
+    assert (tmp_path / "deployed" / "iter0002.py").exists()
+    assert (tmp_path / "state.json").read_text() == before
+
+
 def _sha256(path: str) -> str:
     with open(path, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()

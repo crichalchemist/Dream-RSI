@@ -58,19 +58,31 @@ def kill_process_group(p: subprocess.Popen, grace: float) -> None:
     pipes) are still in the group, so both signals go to the group whether or not ``p`` is
     still running; a group that is already gone is not an error.
     """
-    _signal_group(p.pid, signal.SIGTERM)
-    try:
-        p.wait(timeout=grace)
-    except subprocess.TimeoutExpired:
-        pass
-    _signal_group(p.pid, signal.SIGKILL)  # whatever ignored SIGTERM, including survivors of p
-    p.wait()
+    kill_process_groups([p], grace)
+
+
+def kill_process_groups(ps: list, grace: float) -> None:
+    """End every group in ``ps`` at once: SIGTERM to all, one shared ``grace``, SIGKILL to all."""
+    for p in ps:
+        _signal_group(p.pid, signal.SIGTERM)
+    deadline = time.monotonic() + grace
+    for p in ps:
+        try:
+            p.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            pass
+    for p in ps:
+        _signal_group(p.pid, signal.SIGKILL)  # whatever ignored SIGTERM, including survivors of p
+    for p in ps:
+        p.wait()
 
 
 def _signal_group(pgid: int, sig: int) -> None:
     try:
         os.killpg(pgid, sig)
     except ProcessLookupError:  # nothing left in the group
+        pass
+    except PermissionError:  # Darwin: only zombies left in the group, which nothing can signal
         pass
 
 
@@ -110,13 +122,34 @@ class CommandAgent:
             self._live.add(p)
         try:
             deadline = time.monotonic() + self.timeout
+            swept = False
             while True:  # wait in slices, so a claimed call notices terminate() within a second
                 remaining = max(0.0, deadline - time.monotonic())
                 try:
                     out, err = p.communicate(timeout=min(1.0, remaining))
                     break
                 except subprocess.TimeoutExpired:
-                    if time.monotonic() >= deadline:
+                    with self._lock:
+                        claimed = p not in self._live
+                    if claimed:
+                        # terminate() killed the group; a descendant outside it may hold the pipes
+                        self._close_pipes(p)
+                        return self._terminated()
+                    if p.poll() is not None:  # the CLI has exited; something still holds its pipes
+                        if not swept:  # a member of its group: kill the rest; the next slice is EOF
+                            _signal_group(p.pid, signal.SIGKILL)
+                            swept = True
+                            continue
+                        # still held after the sweep, so by a process outside the group, which is
+                        # not killed by design: keep the CLI's exit status and drop what it printed
+                        self._close_pipes(p)
+                        return {
+                            "returncode": p.returncode,
+                            "stdout": "",
+                            "stderr": "agent exited, but a process outside its group holds its "
+                            "output; output dropped",
+                        }
+                    if time.monotonic() >= deadline:  # the CLI is alive, so its group id is valid
                         kill_process_group(p, self.kill_grace)
                         self._close_pipes(p)
                         return {
@@ -125,12 +158,10 @@ class CommandAgent:
                             "stderr": f"agent timed out after {self.timeout}s",
                             "timed_out": True,
                         }
-                    with self._lock:
-                        claimed = p not in self._live
-                    if claimed:
-                        # terminate() killed the group; a descendant outside it may hold the pipes
-                        self._close_pipes(p)
-                        return self._terminated()
+            # members that outlived the CLI hold nothing this call waits on any more; none of them
+            # outlives the call (the group id is the reaped leader's pid: its reuse by an unrelated
+            # session within these microseconds is not defended against)
+            _signal_group(p.pid, signal.SIGKILL)
             with self._lock:  # terminate() claims a running call by removing it from _live
                 if p not in self._live:
                     return self._terminated()
@@ -148,17 +179,22 @@ class CommandAgent:
         return {"returncode": None, "stdout": "", "stderr": "agent terminated"}
 
     def terminate(self) -> None:
-        """Kill every call still running (whole process groups) and refuse every later call.
-
-        A running call is claimed by removing it from ``_live`` under the lock, so a call whose
-        process had already finished keeps its real result.
-        """
+        """Kill every call still running (whole process groups) and refuse every later call."""
         with self._lock:
             self._closed = True
-            claimed = {p for p in self._live if p.poll() is None}
-            self._live -= claimed
-        for p in claimed:
-            kill_process_group(p, self.kill_grace)
+        self.kill_running()
+
+    def kill_running(self) -> None:
+        """Kill every call still running (whole process groups); later calls are still accepted.
+
+        A running call is claimed by removing it from ``_live`` under the lock, so a call whose
+        process had already finished keeps its real result. The claimed groups share one
+        ``kill_grace``, so the cost of an interrupt does not grow with the batch width.
+        """
+        with self._lock:
+            claimed = [p for p in self._live if p.poll() is None]
+            self._live.difference_update(claimed)
+        kill_process_groups(claimed, self.kill_grace)
 
     @staticmethod
     def _close_pipes(p: subprocess.Popen) -> None:
@@ -205,7 +241,7 @@ class LiveQuestion(Question):
         self._eval_lock = threading.Lock() if serialize_eval else None
         self.cells = {}
         self._next_seq = 0
-        self._interrupted = threading.Event()  # set once an interrupt has cancelled a batch
+        self._cancelled = threading.Event()  # set once the batch in flight has been abandoned
         super().__init__(
             baseline_score,
             max_parallelism,
@@ -244,30 +280,45 @@ class LiveQuestion(Question):
         for m in metas:
             jobs.append((m, self._next_seq, self._direction(m.branch)))
             self._next_seq += 1
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_parallelism) as pool:
-            futures = [pool.submit(self._run_attempt, *job) for job in jobs]
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_parallelism)
+        futures = []
+        try:
+            for job in jobs:  # inside the try: an interrupt mid-submission still cancels the rest
+                futures.append(pool.submit(self._run_attempt, *job))
+            for f in concurrent.futures.as_completed(futures):
+                f.result()  # surfaces a worker's exception as soon as it happens
+        except BaseException as e:
+            # a worker fault ends the episode and an interrupt ends the run; either way the rest
+            # of the batch is abandoned: queued attempts never start, running agents are killed
+            self._cancel(pool, close=not isinstance(e, Exception))
+            raise
+        finally:
             try:
-                for f in concurrent.futures.as_completed(futures):
-                    f.result()  # surfaces a worker's exception as soon as it happens
-            except BaseException as e:
-                if not isinstance(e, Exception):  # an interrupt, not a worker bug
-                    self._cancel(pool)
+                pool.shutdown(wait=True)  # brief once the agents are dead
+            except BaseException:  # an interrupt while the workers were being joined
+                self._cancel(pool, close=True)
                 raise
-            cells = [f.result() for f in futures]
-        out = []
-        for cell in cells:
-            self.cells[cell.id] = cell
-            parent = self.cells.get(cell.parent_id) if cell.parent_id else None
-            out.append(observation_for(cell, parent, self.baseline_score))
-        return out
+        cells = [f.result() for f in futures]
+        observations = [  # parents come from earlier batches: no parent/child pair shares one
+            observation_for(
+                c, self.cells.get(c.parent_id) if c.parent_id else None, self.baseline_score
+            )
+            for c in cells
+        ]
+        self.cells.update({c.id: c for c in cells})  # one statement, last: never half a batch
+        return observations
 
-    def _cancel(self, pool: concurrent.futures.ThreadPoolExecutor) -> None:
-        """Stop the batch: queued attempts never start and running agents are killed."""
-        self._interrupted.set()
+    def _cancel(self, pool: concurrent.futures.ThreadPoolExecutor, close: bool) -> None:
+        """Abandon the batch: queued attempts never start and running agents are killed.
+
+        ``close`` (an interrupt) also refuses every later call. A worker fault leaves the agent
+        usable, because the loop goes on to offline() and to the next iteration with it.
+        """
+        self._cancelled.set()
         pool.shutdown(wait=False, cancel_futures=True)
-        terminate = getattr(self.agent, "terminate", None)
-        if callable(terminate):
-            terminate()
+        stop = getattr(self.agent, "terminate" if close else "kill_running", None)
+        if callable(stop):
+            stop()
 
     def _resume_from(self, branch: int, attempt: int) -> str:
         """The parent's saved program; past an attempt that left none, the nearest ancestor's."""
@@ -278,8 +329,8 @@ class LiveQuestion(Question):
         return os.path.join(self.task.baseline_dir, self.task.eval_program)
 
     def _run_attempt(self, meta: CellMeta, seq: int, direction: str) -> Cell:
-        if self._interrupted.is_set():  # the batch was cancelled before this attempt started
-            raise RuntimeError(f"attempt b{meta.branch}a{meta.attempt} cancelled by an interrupt")
+        if self._cancelled.is_set():  # the batch was abandoned before this attempt started
+            raise RuntimeError(f"attempt b{meta.branch}a{meta.attempt} cancelled with its batch")
         t = self.task
         node = os.path.join(self.tree_dir, node_dirname(meta.branch, meta.attempt))
         os.makedirs(node, exist_ok=True)
@@ -296,14 +347,16 @@ class LiveQuestion(Question):
         )
         started = time.time()
         program = os.path.join(node, t.eval_program)
+        if self._cancelled.is_set():  # abandoned while this attempt was being set up
+            raise RuntimeError(f"attempt b{meta.branch}a{meta.attempt} cancelled with its batch")
         try:
             run = self.agent(prompt, cwd=self.tree_dir, target=node)
         except Exception as e:  # a crashed agent is a failed attempt, not a failed episode
             run = {"returncode": None, "stderr": f"{type(e).__name__}: {e}"}
             if os.path.exists(program):
                 os.remove(program)
-        if self._interrupted.is_set():  # _cancel killed the agent: do not evaluate what it left
-            raise RuntimeError(f"attempt b{meta.branch}a{meta.attempt} killed by an interrupt")
+        if self._cancelled.is_set():  # _cancel killed the agent: do not evaluate what it left
+            raise RuntimeError(f"attempt b{meta.branch}a{meta.attempt} killed with its batch")
         if not os.path.exists(program):
             result = {
                 "combined_score": 0.0,

@@ -3,10 +3,14 @@ import hashlib
 import json
 import os
 import signal
+import subprocess
+import sys
 import time
 
 import pytest
 
+import see.live
+import see.prompts
 from see.live import LiveQuestion
 from see.loader import load_policy
 from see.loop import DreamRSI, LoopConfig, archive_name, install_signal_handlers
@@ -260,6 +264,35 @@ def test_one_malformed_evaluator_result_fails_one_cell_not_the_batch(tmp_path, s
     assert len(q.frozen("iter0001", {})) == 9  # every cell of all three rounds reaches the tree
 
 
+def test_a_fault_while_recording_a_batch_keeps_none_of_it(tmp_path, stub_prompts, monkeypatch):
+    """The cells of a batch reach the tree together or not at all, so neither a fault while
+    recording nor an interrupt between two cells leaves half a batch in the tree."""
+    real, seen = see.live.observation_for, []
+
+    def fails_on_the_second(cell, parent, baseline):
+        seen.append(cell.id)
+        if len(seen) == 2:
+            raise RuntimeError("fault while recording the batch")
+        return real(cell, parent, baseline)
+
+    monkeypatch.setattr(see.live, "observation_for", fails_on_the_second)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    q = LiveQuestion(
+        make_task(str(tmp_path)),
+        lambda prompt, *, cwd, target: {"returncode": 0},  # leaves the parent's program
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=2,
+        branch_count=2,
+        refine_count=0,
+    )
+    with pytest.raises(RuntimeError, match=r"fault while recording"):
+        q.probe_batch(q.legal_roots())
+    assert seen == ["b0a0", "b1a0"] and q.cells == {}
+
+
 def _sha256(path: str) -> str:
     with open(path, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
@@ -311,6 +344,43 @@ def test_tampered_candidate_is_not_deployed(tmp_path, stub_prompts):
     assert json.dumps(loop.state) == state_before
 
 
+def test_a_deployed_policy_edited_since_deploy_is_refused_before_it_runs(tmp_path, stub_prompts):
+    """The digest state.json records at deploy time is checked again when the policy is loaded,
+    so an edited deployed/iterNNNN.py never drives a rollout."""
+    agent = _RecordingAgent()
+    loop = _interruptible_loop(str(tmp_path), agent)
+    loop.online(1)
+    loop.offline(1)
+    deployed = loop.state["deployed"]
+    assert deployed.endswith("iter0002.py") and loop.state["deployed_sha256"] == _sha256(deployed)
+    with open(deployed, "a") as f:
+        f.write("\n# edited after it was deployed\n")
+    calls_before = len(agent.targets)
+    state = (tmp_path / "state.json").read_text()
+    with pytest.raises(RuntimeError, match=r"iter0002\.py changed since it was deployed"):
+        loop.online(2)
+    assert len(agent.targets) == calls_before  # refused before any agent call
+    assert not (tmp_path / "runs" / "iter0002").exists()
+    assert (tmp_path / "state.json").read_text() == state
+
+
+def test_a_sweep_that_scored_other_bytes_than_the_archive_is_refused(tmp_path, monkeypatch):
+    """beta_sweep.json carries the sha256 the subprocess hashed before loading the method; a
+    score for other bytes than the archived ones is an integrity failure, not a score."""
+    loop = _interruptible_loop(str(tmp_path), _RecordingAgent())
+    method = tmp_path / "method.py"
+    method.write_text("# a policy\n")
+    invalid = {"valid": False, "errors": ["x"], "pareto": {"reward": -1e999}, "eq1": {"V": -1e999}}
+    monkeypatch.setattr(
+        loop, "_sweep", lambda archived, rdir: {**invalid, "valid": True, "sha256": "0" * 64}
+    )
+    with pytest.raises(RuntimeError, match=r"did not score the archived bytes"):
+        loop._archive(str(method), 1, 0)
+    # a crashed or timed-out sweep writes no digest, so there is nothing to compare
+    monkeypatch.setattr(loop, "_sweep", lambda archived, rdir: invalid)
+    assert loop._archive(str(method), 1, 1)["score"] == float("-inf")
+
+
 def test_interrupt_freezes_the_partial_tree_under_runs_not_the_pool(tmp_path, stub_prompts):
     """What an interrupted iteration collected is a readable trace under runs/, and the pool
     never sees it."""
@@ -340,7 +410,9 @@ def test_sweep_timeout_kills_the_subprocess_group_and_scores_invalid(tmp_path, p
     """A replay subprocess that hangs is killed with everything it forked, and the version
     scores invalid exactly as a crashed one does."""
     work = str(tmp_path)
-    cfg = LoopConfig(workdir=work, sweep_timeout=1.0, kill_grace=0.2)
+    # 2 s covers interpreter startup, importing see and hashing before the "policy" forks on a
+    # loaded runner; the test's own bound below is what keeps a regression visible
+    cfg = LoopConfig(workdir=work, sweep_timeout=2.0, kill_grace=0.2)
     loop = DreamRSI(cfg, make_task(work), ScriptedDiscoveryAgent(), ScriptedPolicyAgent())
     rdir = tmp_path / "hang"
     rdir.mkdir()
@@ -353,9 +425,9 @@ def test_sweep_timeout_kills_the_subprocess_group_and_scores_invalid(tmp_path, p
     )
     started = time.time()
     report = loop._sweep(str(method), str(rdir))
-    assert time.time() - started < 4.0
+    assert time.time() - started < 5.0  # the "policy" sleeps 30 s
     assert report["valid"] is False
-    assert report["errors"] == ["RuntimeError: sweep timed out after 1.0s"]
+    assert report["errors"] == ["RuntimeError: sweep timed out after 2.0s"]
     assert report["pareto"]["reward"] == float("-inf")
     assert process_gone(int(pid_file.read_text()))
     with open(rdir / "proposal_results" / "beta_sweep.json") as f:
@@ -389,6 +461,40 @@ def test_restart_refuses_when_the_first_archive_dir_exists(tmp_path, stub_prompt
     assert (tmp_path / "state.json").read_text() == state
 
 
+def test_restart_refuses_when_any_archive_of_the_iteration_exists(tmp_path, stub_prompts):
+    """An iteration runs once per workdir, so any policy_dev/history/r*_tNN_m* entry for it is a
+    leftover of an aborted or completed run, not only the r{round+1}_tNN_m0 a restart would
+    recreate: every one of them is named, whatever round or version number it carries."""
+    agent = _RecordingAgent()
+    loop = _interruptible_loop(str(tmp_path), agent)
+    history = tmp_path / "policy_dev" / "history"
+    for name in (archive_name(7, 1, 2), archive_name(1, 2, 0), "baseline"):  # only t01 matters
+        (history / name).mkdir(parents=True)
+    with pytest.raises(RuntimeError, match=r"history/r0007_t01_m2 exists: .*delete it"):
+        loop.online(1)
+    assert agent.targets == []
+    (history / archive_name(8, 1, 0)).mkdir()
+    with pytest.raises(RuntimeError, match=r"r0007_t01_m2 and .*r0008_t01_m0 exist: .*delete them"):
+        loop.online(1)
+    assert agent.targets == []
+
+
+def test_restart_guard_and_manifests_survive_glob_characters_in_the_workdir(tmp_path, stub_prompts):
+    """A workdir such as run[1] must neither make the guard's glob match nothing, which would let
+    a restart overwrite the aborted archive, nor hide the pool's manifests from planning."""
+    work = tmp_path / "run[1]"
+    agent = _RecordingAgent()
+    loop = _interruptible_loop(str(work), agent)
+    (work / "policy_dev" / "history" / archive_name(1, 1, 0)).mkdir(parents=True)
+    pool_entry = work / "trace_pool" / "iter0001"
+    pool_entry.mkdir()
+    (pool_entry / "live_cycle_manifest.json").write_text('{"iteration": 1}\n')
+    assert loop.manifests() == [{"iteration": 1}]
+    with pytest.raises(RuntimeError, match=r"trace_pool/iter0001 and .*r0001_t01_m0 exist"):
+        loop.online(1)
+    assert agent.targets == []
+
+
 def test_sigterm_takes_the_same_path_as_ctrl_c():
     """`kill <pid>` raises KeyboardInterrupt in the main thread, so a run freezes its partial
     tree and refuses on restart like Ctrl-C does, instead of exiting at once."""
@@ -420,6 +526,49 @@ def test_sighup_takes_the_same_path_as_ctrl_c_unless_inherited_ignored():
     finally:
         for s, handler in previous.items():
             signal.signal(s, handler)
+
+
+def test_the_demo_entry_point_maps_sigterm_to_the_partial_freeze(tmp_path, stub_prompts):
+    """`kill <pid>` of a real `python -m see demo` run ends it the way Ctrl-C does: the process
+    dies by KeyboardInterrupt (re-raised as SIGINT, not killed by SIGTERM), the partial tree is
+    frozen under runs/, nothing reaches the pool and state.json is untouched. The entry point runs
+    in a subprocess with the stub prompts and the scripted agent slowed to 0.2 s per attempt, so
+    the signal lands while the first batch is in flight."""
+    work = tmp_path / "work"
+    program = (
+        "import sys, time\n"
+        "import see.prompts, see.toy\n"
+        f"see.prompts.GENERATED = {see.prompts.GENERATED!r}\n"
+        "_call = see.toy.ScriptedDiscoveryAgent.__call__\n"
+        "see.toy.ScriptedDiscoveryAgent.__call__ = "
+        "lambda self, *a, **k: (time.sleep(0.2), _call(self, *a, **k))[1]\n"
+        "from see.__main__ import main\n"
+        "main(['demo', '--workdir', sys.argv[1], '--iterations', '1'])\n"
+    )
+    p = subprocess.Popen(
+        [sys.executable, "-c", program, str(work)],
+        cwd=str(tmp_path),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    tree = work / "runs" / "iter0001" / "tree"
+    deadline = time.time() + 20.0
+    while not any(tree.glob("attempt_*")) and time.time() < deadline:
+        time.sleep(0.05)  # until the first attempt is in flight
+    assert any(tree.glob("attempt_*")), p.communicate(timeout=20.0)[1][-2000:]
+    state = (work / "state.json").read_text()
+    p.send_signal(signal.SIGTERM)
+    _, err = p.communicate(timeout=20.0)
+    assert p.returncode == -signal.SIGINT, err[-2000:]
+    assert "KeyboardInterrupt: signal 15" in err
+    partial = work / "runs" / "iter0001" / "partial"
+    assert Trace.load(str(partial / "trace.json")).trace_id == "iter0001-partial"
+    with open(partial / "live_cycle_manifest.json") as f:
+        manifest = json.load(f)
+    assert manifest["partial"] is True and manifest["error"] == "KeyboardInterrupt: signal 15"
+    assert os.listdir(work / "trace_pool") == []
+    assert (work / "state.json").read_text() == state
 
 
 def test_interrupt_during_the_baseline_evaluation_leaves_nothing_under_runs(tmp_path, stub_prompts):

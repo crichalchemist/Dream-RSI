@@ -119,7 +119,8 @@ class DreamRSI:
 
     def manifests(self) -> list:
         out = []
-        for path in sorted(glob.glob(os.path.join(self.pool, "iter*", "live_cycle_manifest.json"))):
+        pattern = os.path.join(glob.escape(self.pool), "iter*", "live_cycle_manifest.json")
+        for path in sorted(glob.glob(pattern)):
             with open(path) as f:
                 out.append(json.load(f))
         return out
@@ -153,10 +154,11 @@ class DreamRSI:
         """Stage 1: the deployed policy drives discovery; the tree is frozen into the pool."""
         run_dir = os.path.join(self.w, "runs", f"iter{t:04d}")
         out = os.path.join(self.pool, f"iter{t:04d}")
-        # runs/ is created first and trace_pool/ last; the first archive is what a restart's
-        # offline() would recreate, because the round counter is persisted only on success
-        first_archive = os.path.join(self.dev_history, archive_name(self.state["round"] + 1, t, 0))
-        existing = [p for p in (run_dir, out, first_archive) if os.path.exists(p)]
+        # runs/ is created first and trace_pool/ last; any archive of this iteration means it ran
+        # once already, and a restart's offline() would recreate the first one (r{round+1}_tNN_m0),
+        # because the round counter is persisted only on success
+        archives = sorted(glob.glob(os.path.join(glob.escape(self.dev_history), f"r*_t{t:02d}_m*")))
+        existing = [p for p in (run_dir, out, *archives) if os.path.exists(p)]
         if existing:
             one = len(existing) == 1
             raise RuntimeError(
@@ -164,6 +166,15 @@ class DreamRSI:
                 f"interrupted or already ran; delete {'it' if one else 'them'}, do not merge into "
                 f"{'it' if one else 'them'}"
             )
+        expected = self.state.get("deployed_sha256")  # absent until the first offline() completes
+        if expected is not None:
+            with open(self.state["deployed"], "rb") as f:
+                digest = hashlib.sha256(f.read()).hexdigest()
+            if digest != expected:
+                raise RuntimeError(
+                    f"{self.state['deployed']} changed since it was deployed (sha256 {digest}, "
+                    f"deployed {expected}): refusing to run it"
+                )
         policy = load_policy(self.state["deployed"])(None)  # baked-in default beta
         ctx = self._context(self.manifests())
         plan = validate_plan(policy.plan_grid(ctx), ctx)
@@ -293,6 +304,11 @@ class DreamRSI:
             with open(os.path.join(rdir, "dev_agent.json"), "w") as f:
                 json.dump(agent_run, f, indent=1, default=str)
         report = self._sweep(archived, rdir)
+        if "sha256" in report and report["sha256"] != digest:  # the sweep hashes what it loads
+            raise RuntimeError(
+                f"{archived} was scored as sha256 {report['sha256']} but archived as {digest}: "
+                "the sweep did not score the archived bytes"
+            )
         return {
             "round": name,
             "m": m,

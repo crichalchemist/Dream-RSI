@@ -3,9 +3,9 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^(assets/|papers/)
+        exclude: ^(assets/|papers/|reconstruction/evidence/)
       - id: end-of-file-fixer
-        exclude: ^(assets/|papers/)
+        exclude: ^(assets/|papers/|reconstruction/evidence/)
       - id: check-yaml
       - id: check-added-large-files
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -14,8 +14,10 @@ repos:
       - id: ruff-check
         args: [--fix]
         files: ^reconstruction/
+        exclude: ^reconstruction/evidence/
       - id: ruff-format
         files: ^reconstruction/
+        exclude: ^reconstruction/evidence/
   - repo: local
     hooks:
       # system hook on purpose: the pyright-python mirror's isolated env cannot resolve numpy/pymupdf.

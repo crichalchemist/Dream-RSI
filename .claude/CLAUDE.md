@@ -28,6 +28,7 @@ python -m pytest -q                   # whole suite, ~14s; exact count pinned in
 python -m pytest -q tests/test_loop.py::test_on_policy_replay_reproduces_the_live_episode
 python -m see demo --workdir /tmp/drsi                                          # whole loop, toy task, ~8s
 python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tmp/sweep
+python scripts/report_run.py --workdir runs/lasso --out /tmp/report   # D2's four questions
 ```
 
 - Without `generated/`, `see demo` and `see/prompts.py` raise `FileNotFoundError`; the test suite
@@ -129,3 +130,6 @@ prompts from `generated/`, which is why extraction is a prerequisite.
   into them. After a SIGKILL of the parent, or any signal the entry
   points do not map, which run no cleanup, check for a surviving `see sweep` process first.
 - `*.local.md` files are private maintainer notes and are gitignored.
+- `evidence/` holds committed run evidence written by tools, never an attempt's program
+  (SimpleTES is AGPL): `report_run.py --copy-evidence` copies an allowlist and withholds any
+  file quoting `CPP_CODE`. It is excluded from ruff and the whitespace hooks, kept as written.

@@ -64,6 +64,13 @@ Replay-score any policy file over an existing trace pool:
 python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tmp/sweep
 ```
 
+Turn a run's workdir into counts for the four questions track D2 asks (per-round calls,
+out-of-support replay, untouched programs, empty batches), as `report.md` and `report.json`:
+
+```bash
+python scripts/report_run.py --workdir runs/lasso --out /tmp/report
+```
+
 ## Layout
 
 ```
@@ -78,7 +85,8 @@ see/loop.py                 DreamRSI outer loop
 see/pool.py, loader.py      trace pool and policy-file loading
 see/tasks.py                SimpleTES task adapter
 see/toy.py, synthetic.py    toy task, scripted agents, synthetic trees (tests/demo only)
-scripts/                    verify_lasso.py, run_dream_rsi.py
+scripts/                    verify_lasso.py, run_dream_rsi.py, report_run.py
+evidence/                   committed run evidence: reports, traces, scores (no programs)
 ```
 
 `generated/` is not committed. It holds the paper's own text (© 2026 Google),

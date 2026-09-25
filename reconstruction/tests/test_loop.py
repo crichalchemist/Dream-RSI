@@ -7,6 +7,7 @@ import time
 
 import pytest
 
+import see.live
 from see.live import LiveQuestion
 from see.loader import load_policy
 from see.loop import DreamRSI, LoopConfig, archive_name, install_signal_handlers
@@ -258,6 +259,35 @@ def test_one_malformed_evaluator_result_fails_one_cell_not_the_batch(tmp_path, s
     with open(tree / "attempt_b002_a002" / "eval" / "score.json") as f:
         assert json.load(f)["evaluator_crashed"] is True
     assert len(q.frozen("iter0001", {})) == 9  # every cell of all three rounds reaches the tree
+
+
+def test_a_fault_while_recording_a_batch_keeps_none_of_it(tmp_path, stub_prompts, monkeypatch):
+    """The cells of a batch reach the tree together or not at all, so what an interrupt freezes
+    never holds half a batch without its episode row."""
+    real, seen = see.live.observation_for, []
+
+    def fails_on_the_second(cell, parent, baseline):
+        seen.append(cell.id)
+        if len(seen) == 2:
+            raise RuntimeError("fault while recording the batch")
+        return real(cell, parent, baseline)
+
+    monkeypatch.setattr(see.live, "observation_for", fails_on_the_second)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    q = LiveQuestion(
+        make_task(str(tmp_path)),
+        lambda prompt, *, cwd, target: {"returncode": 0},  # leaves the parent's program
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=2,
+        branch_count=2,
+        refine_count=0,
+    )
+    with pytest.raises(RuntimeError, match=r"fault while recording"):
+        q.probe_batch(q.legal_roots())
+    assert seen == ["b0a0", "b1a0"] and q.cells == {}
 
 
 def _sha256(path: str) -> str:

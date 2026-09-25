@@ -252,6 +252,62 @@ def test_interrupt_kills_running_agents_and_records_nothing(tmp_path, stub_promp
     assert not list(tree.rglob("score.json"))  # killed attempts are not evaluated
 
 
+def test_a_worker_fault_kills_the_batchs_running_agents_but_keeps_the_agent_usable(
+    tmp_path, stub_prompts, process_gone
+):
+    """An exception a worker raises after its agent returned (here a host fault: the attempt's
+    eval/ path exists as a file) ends the episode; the sibling agent still running is killed
+    instead of running to its timeout, nothing from the batch is recorded, and the agent stays
+    open, because offline() and the next iteration use the same one."""
+    pid_dir = tmp_path / "pids"
+    pid_dir.mkdir()
+    inner = CommandAgent(stand_in(pid_dir), timeout=3.0, kill_grace=0.2)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "attempt_b000_a000").mkdir()
+    (tree / "attempt_b000_a000" / "eval").write_text("a file where the eval directory goes\n")
+
+    class ReturnsAtOnceOnBranch0:
+        kill_running, terminate = inner.kill_running, inner.terminate
+
+        def __call__(self, prompt, *, cwd, target):
+            if target.endswith("attempt_b000_a000"):
+                deadline = time.time() + 5.0
+                while not grandchild_pids(pid_dir) and time.time() < deadline:
+                    time.sleep(0.02)  # until branch 1's stand-in has forked
+                return {"returncode": 0}
+            return inner(prompt, cwd=cwd, target=target)
+
+    q = LiveQuestion(
+        make_task(str(tmp_path)),
+        ReturnsAtOnceOnBranch0(),
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=2,
+        branch_count=2,
+        refine_count=0,
+    )
+    started = time.time()
+    with pytest.raises(FileExistsError):
+        q.probe_batch(q.legal_roots())
+    assert time.time() - started < 2.0  # killed, not the 3 s timeout
+    [pid] = grandchild_pids(pid_dir)
+    assert process_gone(pid)
+    assert q.cells == {}
+    later = threading.Thread(  # the agent is not closed: a later call still spawns
+        target=lambda: inner("p", cwd=str(tmp_path), target=str(tmp_path)), daemon=True
+    )
+    later.start()
+    deadline = time.time() + 5.0
+    while len(grandchild_pids(pid_dir)) < 2 and time.time() < deadline:
+        time.sleep(0.02)
+    assert len(grandchild_pids(pid_dir)) == 2
+    inner.terminate()
+    later.join(timeout=2.0)
+    assert not later.is_alive()
+
+
 def test_terminate_returns_even_when_an_escapee_holds_the_pipes(tmp_path):
     """terminate() ends a call within about a second even when a descendant outside the group
     still holds the agent's pipes: the call reports terminated instead of waiting for EOF."""

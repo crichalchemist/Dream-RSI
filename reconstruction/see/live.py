@@ -120,6 +120,7 @@ class CommandAgent:
             self._live.add(p)
         try:
             deadline = time.monotonic() + self.timeout
+            swept = False
             while True:  # wait in slices, so a claimed call notices terminate() within a second
                 remaining = max(0.0, deadline - time.monotonic())
                 try:
@@ -135,12 +136,22 @@ class CommandAgent:
                             "stderr": f"agent timed out after {self.timeout}s",
                             "timed_out": True,
                         }
+                    if p.poll() is not None and not swept:
+                        # the CLI has exited but a member of its group still holds its pipes:
+                        # kill the rest of the group, and the next slice reads EOF
+                        _signal_group(p.pid, signal.SIGKILL)
+                        swept = True
+                        continue
                     with self._lock:
                         claimed = p not in self._live
                     if claimed:
                         # terminate() killed the group; a descendant outside it may hold the pipes
                         self._close_pipes(p)
                         return self._terminated()
+            # members that outlived the CLI hold nothing this call waits on any more; none of them
+            # outlives the call (the group id is the reaped leader's pid: its reuse by an unrelated
+            # session within these microseconds is not defended against)
+            _signal_group(p.pid, signal.SIGKILL)
             with self._lock:  # terminate() claims a running call by removing it from _live
                 if p not in self._live:
                     return self._terminated()

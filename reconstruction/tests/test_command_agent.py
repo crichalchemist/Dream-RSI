@@ -278,6 +278,49 @@ def test_terminate_returns_even_when_an_escapee_holds_the_pipes(tmp_path):
     assert results == [{"returncode": None, "stdout": "", "stderr": "agent terminated"}]
 
 
+def test_a_finished_agent_whose_child_holds_the_pipes_returns_its_real_result(
+    tmp_path, process_gone
+):
+    """A CLI that exits while a process it forked still holds its stdout neither makes the call
+    wait for that process nor turns into a timeout: the rest of the group is killed within a
+    second and the CLI's own exit status and output come back."""
+    pid_dir = tmp_path / "pids"
+    pid_dir.mkdir()
+    holds_the_pipes = [
+        "sh",
+        "-c",
+        'sleep 30 & echo $! > "$0/child.pid"; echo done; exit 7',
+        str(pid_dir),
+        "{prompt}",
+    ]
+    agent = CommandAgent(holds_the_pipes, timeout=5.0, kill_grace=0.2)
+    started = time.time()
+    result = agent("p", cwd=str(tmp_path), target=str(tmp_path))
+    assert time.time() - started < 3.0  # neither the 5 s timeout nor the 30 s sleep
+    assert result == {"returncode": 7, "stdout": "done\n", "stderr": ""}
+    assert process_gone(int((pid_dir / "child.pid").read_text()))
+
+
+def test_members_left_behind_by_a_finished_agent_are_killed(tmp_path, process_gone):
+    """A process the CLI forked and left running with the pipes closed (a server it started)
+    does not outlive the call: the group is swept once the CLI has exited normally."""
+    pid_dir = tmp_path / "pids"
+    pid_dir.mkdir()
+    leaves_a_daemon = [
+        "sh",
+        "-c",
+        'sleep 30 >/dev/null 2>&1 & echo $! > "$0/child.pid"; exit 0',
+        str(pid_dir),
+        "{prompt}",
+    ]
+    agent = CommandAgent(leaves_a_daemon, timeout=5.0, kill_grace=0.2)
+    started = time.time()
+    result = agent("p", cwd=str(tmp_path), target=str(tmp_path))
+    assert time.time() - started < 1.0  # nothing held the pipes: EOF at once
+    assert result == {"returncode": 0, "stdout": "", "stderr": ""}
+    assert process_gone(int((pid_dir / "child.pid").read_text()))
+
+
 def test_a_half_written_multibyte_character_does_not_crash_the_call(tmp_path):
     """An agent killed or exiting between the bytes of one character must not raise out of the
     call: its output is diagnostic text, decoded with replacement."""

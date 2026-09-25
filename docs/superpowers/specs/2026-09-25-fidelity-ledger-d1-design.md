@@ -119,7 +119,8 @@ the one before `offline(1)`.
 
 ### 3.4 Swallowed fault in the manifest (`see/live.py`, `see/loop.py`)
 
-`_cancel` records the abandoning exception as `LiveQuestion.fault` (`"<Type>: <message>"`). When
+`_cancel` records the first abandoning exception as `LiveQuestion.fault` (`"<Type>: <message>"`); a
+later refusal of the same abandoned batch does not overwrite it. When
 `solve` returns normally with `q.fault` set, `online()` records
 `error = f"batch abandoned: {q.fault}"` in the manifest; the tree is frozen into the pool with that
 error, exactly as when the fault propagates. Test: a policy whose `solve` catches the batch's
@@ -205,7 +206,7 @@ scripted, milliseconds per attempt).
 4. Swallowed fault in the manifest (§3.4).
 5. `tests/test_ledger.py` (rulings 1, 4, 5, 6, 7, 8) and ruling 3's extra case.
 6. Replay-equivalence assertions (ruling 10).
-7. GAPS: the "How to change" column, the new rows, the §1 split (rulings 1, 2, 5, 9 and the four
+7. GAPS: the "How to change" column, the new rows, the §1 split (rulings 1, 2, 5, 7, 9 and the four
    fixes' clauses).
 8. README and CLAUDE.md wording; CI pin to the measured count.
 

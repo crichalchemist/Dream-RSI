@@ -18,6 +18,7 @@ import json
 import numbers
 import os
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -49,36 +50,76 @@ class TaskSpec:
     higher_is_better: bool = True  # Sec. 3 wants larger = better; flip e.g. autocorrelation
 
 
-class CommandAgent:
-    """Run a coding-agent CLI; ``{prompt}`` in the argv template is replaced."""
+def kill_process_group(p: subprocess.Popen, grace: float) -> None:
+    """End ``p``'s whole process group: SIGTERM, then SIGKILL after ``grace`` seconds.
 
-    def __init__(self, argv, timeout: float = 3600.0, env: dict | None = None):
+    ``p`` must have been started with ``start_new_session=True``, so its pid is the group id.
+    Members that outlive ``p`` (a CLI that exits and leaves a background process holding its
+    pipes) are still in the group, so both signals go to the group whether or not ``p`` is
+    still running; a group that is already gone is not an error.
+    """
+    _signal_group(p.pid, signal.SIGTERM)
+    try:
+        p.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        pass
+    _signal_group(p.pid, signal.SIGKILL)  # whatever ignored SIGTERM, including survivors of p
+    p.wait()
+
+
+def _signal_group(pgid: int, sig: int) -> None:
+    try:
+        os.killpg(pgid, sig)
+    except ProcessLookupError:  # nothing left in the group
+        pass
+
+
+class CommandAgent:
+    """Run a coding-agent CLI; ``{prompt}`` in the argv template is replaced.
+
+    Every call runs in its own session, so a timeout kills the CLI together with
+    everything it forked, not just the CLI.
+    """
+
+    def __init__(
+        self, argv, timeout: float = 3600.0, env: dict | None = None, kill_grace: float = 5.0
+    ):
         self.argv = list(AGENT_PRESETS.get(argv, argv) if isinstance(argv, str) else argv)
         self.timeout = timeout
         self.env = env
+        self.kill_grace = kill_grace  # seconds between SIGTERM and SIGKILL
+        self._live: set[subprocess.Popen] = set()
+        self._lock = threading.Lock()
 
     def __call__(self, prompt: str, *, cwd: str, target: str) -> dict:
         argv = [prompt if a == "{prompt}" else a for a in self.argv]
+        p = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={**os.environ, **(self.env or {})},
+            start_new_session=True,
+        )
+        with self._lock:
+            self._live.add(p)
         try:
-            p = subprocess.run(
-                argv,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                env={**os.environ, **(self.env or {})},
-            )
-            return {
-                "returncode": p.returncode,
-                "stdout": p.stdout[-4000:],
-                "stderr": p.stderr[-4000:],
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "returncode": None,
-                "stdout": "",
-                "stderr": f"agent timed out after {self.timeout}s",
-            }
+            try:
+                out, err = p.communicate(timeout=self.timeout)
+            except subprocess.TimeoutExpired:
+                kill_process_group(p, self.kill_grace)
+                p.communicate()  # the group is dead; drain what it left in the pipes
+                return {
+                    "returncode": None,
+                    "stdout": "",
+                    "stderr": f"agent timed out after {self.timeout}s",
+                    "timed_out": True,
+                }
+            return {"returncode": p.returncode, "stdout": out[-4000:], "stderr": err[-4000:]}
+        finally:
+            with self._lock:
+                self._live.discard(p)
 
 
 def oriented_score(task: TaskSpec, result: dict) -> float:
@@ -215,6 +256,7 @@ class LiveQuestion(Question):
                     "fail_class": fail_class,
                     "seconds": time.time() - started,
                     "agent_returncode": run.get("returncode") if run else None,
+                    "agent_timed_out": bool(run.get("timed_out")) if run else False,
                 },
                 f,
                 indent=1,

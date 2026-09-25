@@ -108,8 +108,8 @@ class CommandAgent:
                 start_new_session=True,
             )
             self._live.add(p)
-        deadline = time.monotonic() + self.timeout
         try:
+            deadline = time.monotonic() + self.timeout
             while True:  # wait in slices, so a claimed call notices terminate() within a second
                 remaining = max(0.0, deadline - time.monotonic())
                 try:

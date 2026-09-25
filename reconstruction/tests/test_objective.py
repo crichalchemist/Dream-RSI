@@ -1,9 +1,17 @@
+import dataclasses
+
 import pytest
 
-from see.objective import attainment, beta_sweep, eq1_value, pareto_auc, score_of
+from see.objective import attainment, beta_sweep, eq1_value, pareto_auc, run_episode, score_of
 from see.policies.parallel_refine import ParallelRefine
 from see.policies.portfolio import OptimalPolicy
-from see.policy.api import GridPlan, LLMDesignedMethod, SimResult, finalize_result
+from see.policy.api import (
+    GridPlan,
+    GridPlanningContext,
+    LLMDesignedMethod,
+    SimResult,
+    finalize_result,
+)
 from see.synthetic import synthetic_trace
 from see.world import Cell, Trace
 
@@ -96,3 +104,38 @@ def test_adaptive_policy_beats_the_parallel_refine_floor_on_synthetic_traces():
     works = [p["work"] for p in adaptive["per_beta"]]
     assert works == sorted(works) and works[0] < works[-1]  # beta trades work for attainment
     assert score_of(adaptive, "pareto") > score_of(floor, "pareto")
+
+
+def test_rejected_plan_replays_on_the_fallback_grid_not_the_whole_trace():
+    # online() runs a rejected plan on the configured fallback grid; replay must do the same,
+    # or a candidate whose plan is rejected is scored on a wider tree than it would see live.
+    class Rejected(ParallelRefine):
+        def plan_grid(self, context):
+            return GridPlan(context.hard_max_branch_count + 1, 0, reason="over the hard cap")
+
+    class Explicit(ParallelRefine):
+        def plan_grid(self, context):
+            return GridPlan(
+                context.fallback_branch_count, context.fallback_refine_count, reason="fallback"
+            )
+
+    trace = synthetic_trace(0, branches=5, refine=6, max_parallelism=5)
+    context = GridPlanningContext(
+        history=(),
+        fallback_branch_count=2,
+        fallback_refine_count=2,
+        hard_max_branch_count=3,
+        hard_max_refine_count=3,
+        max_parallelism=5,
+        trace_branch_count=5,
+        trace_refine_count=6,
+    )
+    rejected = run_episode(Rejected(None), trace, context, record=True)
+    explicit = run_episode(Explicit(None), trace, context, record=True)
+    assert rejected.plan is None
+    assert explicit.plan is not None
+    assert (explicit.plan["branch_count"], explicit.plan["refine_count"]) == (2, 2)
+    probed = [trace.cells[cid] for step in rejected.log for cid in step["batch"]]
+    assert probed, "the fallback grid holds recorded cells, so the episode must probe some"
+    assert [c.id for c in probed if c.branch >= 2 or c.attempt > 2] == []
+    assert rejected == dataclasses.replace(explicit, plan=None)

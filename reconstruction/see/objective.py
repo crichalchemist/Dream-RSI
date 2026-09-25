@@ -127,12 +127,16 @@ def run_episode(
 ) -> Episode:
     plan, error, q = None, None, None
     try:
+        branch_count = refine_count = None  # use_plan=False replays on the trace's full support
         if use_plan:
             plan = validate_plan(policy.plan_grid(context), context)
+            # a rejected or absent plan replays on the fallback grid, as online() runs it live
+            branch_count = plan.branch_count if plan else context.fallback_branch_count
+            refine_count = plan.refine_count if plan else context.fallback_refine_count
         q = ReplayQuestion(
             trace,
-            branch_count=plan.branch_count if plan else None,
-            refine_count=plan.refine_count if plan else None,
+            branch_count=branch_count,
+            refine_count=refine_count,
             max_rounds=max_rounds,
             record_episode=record,
         )

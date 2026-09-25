@@ -290,6 +290,8 @@ class LiveQuestion(Question):
             run = {"returncode": None, "stderr": f"{type(e).__name__}: {e}"}
             if os.path.exists(program):
                 os.remove(program)
+        if self._interrupted.is_set():  # _cancel killed the agent: do not evaluate what it left
+            raise RuntimeError(f"attempt b{meta.branch}a{meta.attempt} killed by an interrupt")
         if not os.path.exists(program):
             result = {
                 "combined_score": 0.0,

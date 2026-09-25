@@ -13,8 +13,8 @@ that file before trusting any number this code produces.
 | Replay simulator and policy API (`see.policy.api`, `see.policy.observation_signal`) | Sec. 3, Listing 2 | implemented and tested; same import paths as the paper's prompt |
 | Objectives: Eq. (1) and the beta-sweep `pareto.reward` | Sec. 3, Listing 2 | implemented; AUC/attainment details inferred |
 | Parallel-refine initial policy | Sec. 4 | implemented |
-| Online rollout: workspaces, parallel workers, agent + evaluator | Sec. 3, Listing 1 | implemented; tested with scripted agents and the real Lasso evaluator |
-| Outer loop: online, pool, M versions, argmax deploy | Sec. 3, Fig. 1 | implemented; tested end to end with scripted agents; replay ≡ live pinned across seeds and both policies; deploy integrity verified by digest |
+| Online rollout: workspaces, parallel workers, agent + evaluator | Sec. 3, Listing 1 | implemented; tested with scripted agents and the real Lasso evaluator; an agent timeout or an interrupt kills the agent's whole process group |
+| Outer loop: online, pool, M versions, argmax deploy | Sec. 3, Fig. 1 | implemented; tested end to end with scripted agents; replay ≡ live pinned across seeds and both policies; deploy integrity verified by digest; an interrupt freezes the partial tree under `runs/`, never the pool, and a restart refuses |
 | Prompts (Listings 1, 2) and discovered Lasso solver (Listing 3) | appendix | regenerated from the PDF, verbatim |
 | Lasso and math tasks | SimpleTES | adapter (`see/tasks.py`) |
 | KernelBench tasks | KernelBench | no adapter |

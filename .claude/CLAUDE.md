@@ -93,11 +93,12 @@ prompts from `generated/`, which is why extraction is a prerequisite.
 - Run everything from `reconstruction/` inside its venv; the package is installed editable, so nothing puts it on `sys.path`.
 - `LoopConfig.serialize_eval=True` by default: evaluations are serialized because timing-based
   tasks interfere with each other. Do not parallelize evaluation for Lasso or kernel tasks.
-- An interrupted iteration cannot be resumed: `online()` raises if `runs/iterNNNN/` already
-  exists. Delete the partial `runs/iterNNNN/` (and the matching `trace_pool/` entry if present)
-  and the aborted iteration's `policy_dev/history/r*_tNN_m*` directories, then restart — the
-  round counter is persisted only on success, so a restart would otherwise recreate and
-  overwrite those archive names. Do not merge into it. Before deleting, confirm no `see sweep`
-  subprocess from the killed run is still running: `_sweep` starts it with `subprocess.run`,
-  which outlives a killed parent and keeps writing under `policy_dev/history/`.
+- An interrupted iteration cannot be resumed: `online()` raises if `runs/iterNNNN/`,
+  `trace_pool/iterNNNN/` or the iteration's first archive `policy_dev/history/rNNNN_tNN_m0/`
+  already exists, naming every one that does. Ctrl-C and SIGTERM (the entry points call
+  `install_signal_handlers()`) kill the running agents' process groups and freeze what was
+  collected under `runs/iterNNNN/partial/`, never into the pool. To restart, delete the named
+  directories and the aborted iteration's other `policy_dev/history/r*_tNN_m*` entries — the
+  round counter is persisted only on success — and do not merge into them. Only after a SIGKILL
+  of the parent (which runs no cleanup) check for a surviving `see sweep` process.
 - `*.local.md` files are private maintainer notes and are gitignored.

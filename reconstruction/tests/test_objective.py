@@ -2,7 +2,16 @@ import dataclasses
 
 import pytest
 
-from see.objective import attainment, beta_sweep, eq1_value, pareto_auc, run_episode, score_of
+from see.loop import LoopConfig
+from see.objective import (
+    attainment,
+    beta_sweep,
+    eq1_value,
+    pareto_auc,
+    run_episode,
+    score_of,
+    validate_plan,
+)
 from see.policies.parallel_refine import ParallelRefine
 from see.policies.portfolio import OptimalPolicy
 from see.policy.api import (
@@ -139,3 +148,25 @@ def test_rejected_plan_replays_on_the_fallback_grid_not_the_whole_trace():
     assert probed, "the fallback grid holds recorded cells, so the episode must probe some"
     assert [c.id for c in probed if c.branch >= 2 or c.attempt > 2] == []
     assert rejected == dataclasses.replace(explicit, plan=None)
+
+
+def test_default_hard_caps_admit_no_more_calls_than_the_paper():
+    # the context online() plans against: DreamRSI._context over LoopConfig's defaults
+    cfg = LoopConfig(workdir="unused")
+    (fallback_b, fallback_r), (hard_b, hard_r) = cfg.fallback_grid, cfg.hard_max_grid
+    context = GridPlanningContext(
+        history=(),
+        fallback_branch_count=fallback_b,
+        fallback_refine_count=fallback_r,
+        hard_max_branch_count=hard_b,
+        hard_max_refine_count=hard_r,
+        max_parallelism=cfg.max_parallelism,
+    )
+    assert validate_plan(GridPlan(32, 19, reason="test"), context) is not None
+    assert validate_plan(GridPlan(33, 19, reason="test"), context) is None
+    assert validate_plan(GridPlan(32, 20, reason="test"), context) is None
+    for branch_count in range(1, 40):
+        for refine_count in range(0, 25):
+            plan = validate_plan(GridPlan(branch_count, refine_count, reason="test"), context)
+            if plan is not None:
+                assert plan.branch_count * (plan.refine_count + 1) <= 640  # 32 x 20, Flash

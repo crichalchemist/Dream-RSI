@@ -48,7 +48,7 @@ class LoopConfig:
     versions: int = 4  # M, policy versions per offline phase (unstated)
     max_parallelism: int = 10  # W workers (10 for Gemini-3.1-Pro runs, 32 for Flash)
     fallback_grid: tuple = (10, 10)  # runner default: 10 branches x 11 attempts = 110 calls
-    hard_max_grid: tuple = (32, 30)  # caps plan_grid may request (unstated)
+    hard_max_grid: tuple = (32, 19)  # caps plan_grid may request (unstated)
     max_live_rounds: int | None = None  # K1 (unstated)
     max_replay_rounds: int | None = None  # K2 (unstated)
     betas: tuple = DEFAULT_BETAS

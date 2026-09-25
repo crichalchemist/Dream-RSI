@@ -89,7 +89,7 @@ def main(argv=None):
     s.add_argument("--beta2", type=float, default=0.0)
     s.add_argument("--max-rounds", type=int, default=None)
     s.add_argument("--fallback", type=int, nargs=2, default=(10, 10))
-    s.add_argument("--hard-max", type=int, nargs=2, default=(32, 30))
+    s.add_argument("--hard-max", type=int, nargs=2, default=(32, 19))
     s.set_defaults(func=cmd_sweep)
     d = sub.add_parser("demo", help="run the whole loop on the toy task with scripted agents")
     d.add_argument("--workdir", required=True)

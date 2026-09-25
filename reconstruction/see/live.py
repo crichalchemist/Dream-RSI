@@ -119,8 +119,10 @@ class CommandAgent:
                     "stderr": f"agent timed out after {self.timeout}s",
                     "timed_out": True,
                 }
-            if self._closed:  # terminate() ended this call
-                return self._terminated()
+            with self._lock:  # terminate() claims a running call by removing it from _live
+                if p not in self._live:
+                    return self._terminated()
+                self._live.discard(p)
             return {"returncode": p.returncode, "stdout": out[-4000:], "stderr": err[-4000:]}
         finally:
             if p.poll() is None:  # an exception escaped communicate(): take the group with us
@@ -134,11 +136,16 @@ class CommandAgent:
         return {"returncode": None, "stdout": "", "stderr": "agent terminated"}
 
     def terminate(self) -> None:
-        """Kill every call in flight (whole process groups) and refuse every later call."""
+        """Kill every call still running (whole process groups) and refuse every later call.
+
+        A running call is claimed by removing it from ``_live`` under the lock, so a call whose
+        process had already finished keeps its real result.
+        """
         with self._lock:
             self._closed = True
-            live = list(self._live)
-        for p in live:
+            claimed = {p for p in self._live if p.poll() is None}
+            self._live -= claimed
+        for p in claimed:
             kill_process_group(p, self.kill_grace)
 
     @staticmethod

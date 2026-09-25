@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 
@@ -235,3 +236,54 @@ def test_one_malformed_evaluator_result_fails_one_cell_not_the_batch(tmp_path, s
     assert obs[0].fail_class == obs[2].fail_class == "ok"
     assert obs[1].error is not None and "'error': 42" in obs[1].error
     assert len(q.frozen("iter0001", {})) == 6  # every cell of both batches reaches the tree
+
+
+def _sha256(path: str) -> str:
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def test_deployed_policy_digest_matches_the_scored_candidate(finished_loop):
+    """Sec. 3's never-regress guarantee is about bytes: deploy exactly what was scored."""
+    w = finished_loop.w
+    with open(os.path.join(w, "state.json")) as f:
+        state = json.load(f)
+    for entry in state["log"]:
+        chosen = next(c for c in entry["offline"] if c["round"] == entry["selected"])
+        summary = os.path.join(
+            w, "policy_dev", "history", chosen["round"], "proposal_results", "beta_sweep.json"
+        )
+        with open(summary) as f:
+            swept = json.load(f)["sha256"]
+        deployed = os.path.join(w, "deployed", f"iter{entry['iteration'] + 1:04d}.py")
+        assert swept == chosen["sha256"] == _sha256(deployed)
+    assert state["deployed_sha256"] == _sha256(state["deployed"])
+
+
+def test_tampered_candidate_is_not_deployed(tmp_path, stub_prompts):
+    """A candidate whose file changed after it was scored is refused, not deployed."""
+    work = str(tmp_path)
+    cfg = LoopConfig(
+        workdir=work,
+        iterations=1,
+        versions=2,
+        max_parallelism=2,
+        fallback_grid=(2, 2),
+        hard_max_grid=(4, 4),
+        betas=(0.0, 1.0),
+    )
+    loop = DreamRSI(cfg, make_task(work), ScriptedDiscoveryAgent(seed=3), ScriptedPolicyAgent())
+    loop.online(1)
+    loop.offline(1)
+    entry = loop.state["log"][-1]
+    scored = next(c for c in entry["offline"] if c["round"] == entry["selected"])
+    record = {**scored, "method": os.path.join(loop.dev_history, scored["round"], "method.py")}
+    deployed_dir = os.path.join(work, "deployed")
+    before = {n: _sha256(os.path.join(deployed_dir, n)) for n in os.listdir(deployed_dir)}
+    state_before = json.dumps(loop.state)
+    with open(record["method"], "a") as f:
+        f.write("\n# edited after it was scored\n")
+    with pytest.raises(RuntimeError, match=r"changed after it was scored"):
+        loop._deploy(1, record)
+    assert {n: _sha256(os.path.join(deployed_dir, n)) for n in os.listdir(deployed_dir)} == before
+    assert json.dumps(loop.state) == state_before

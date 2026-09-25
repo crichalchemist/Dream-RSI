@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 import glob
+import hashlib
 import json
 import os
 import shutil
@@ -207,13 +208,29 @@ class DreamRSI:
             run = self.policy_agent(prompt, cwd=self.dev, target=method_file)
             candidates.append(self._archive(method_file, t, m, agent_run=run))
         best = max(candidates, key=lambda c: (c["score"], -c["m"]))  # ties keep the earlier one
-        deployed = os.path.join(self.w, "deployed", f"iter{t + 1:04d}.py")
-        shutil.copy(best["method"], deployed)
-        self.state["deployed"], self.state["deployed_round"] = deployed, best["round"]
+        deployed = self._deploy(t, best)
         self.state["log"][-1]["offline"] = [
-            {k: c[k] for k in ("round", "m", "score", "valid")} for c in candidates
+            {k: c[k] for k in ("round", "m", "score", "valid", "sha256")} for c in candidates
         ]
         self.state["log"][-1]["selected"] = best["round"]
+        self._save_state()
+        return deployed
+
+    def _deploy(self, t: int, record: dict) -> str:
+        """Copy the scored candidate to deployed/ as pi_{t+1}, refusing any changed bytes."""
+        with open(record["method"], "rb") as f:
+            code = f.read()
+        digest = hashlib.sha256(code).hexdigest()
+        if digest != record["sha256"]:
+            raise RuntimeError(
+                f"{record['method']} changed after it was scored (sha256 {digest}, "
+                f"scored {record['sha256']}): refusing to deploy it"
+            )
+        deployed = os.path.join(self.w, "deployed", f"iter{t + 1:04d}.py")
+        with open(deployed, "wb") as f:
+            f.write(code)  # the verified bytes, not a second read of the file
+        self.state["deployed"], self.state["deployed_round"] = deployed, record["round"]
+        self.state["deployed_sha256"] = digest
         self._save_state()
         return deployed
 
@@ -224,6 +241,8 @@ class DreamRSI:
         os.makedirs(rdir, exist_ok=True)
         archived = os.path.join(rdir, "method.py")
         shutil.copy(method_path, archived)
+        with open(archived, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()  # before the sweep runs the code
         if agent_run is not None:
             with open(os.path.join(rdir, "dev_agent.json"), "w") as f:
                 json.dump(agent_run, f, indent=1, default=str)
@@ -232,6 +251,7 @@ class DreamRSI:
             "round": name,
             "m": m,
             "method": archived,
+            "sha256": digest,
             "valid": report.get("valid", False),
             "score": score_of(report, self.c.objective) if report.get("valid") else float("-inf"),
         }

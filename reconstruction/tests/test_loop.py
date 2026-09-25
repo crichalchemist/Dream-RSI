@@ -1,3 +1,4 @@
+import dataclasses
 import hashlib
 import json
 import os
@@ -11,7 +12,7 @@ from see.loader import load_policy
 from see.loop import DreamRSI, LoopConfig, archive_name, install_signal_handlers
 from see.objective import run_episode
 from see.pool import context_factory, load_pool
-from see.toy import ScriptedDiscoveryAgent, ScriptedPolicyAgent, make_task
+from see.toy import ScriptedDiscoveryAgent, ScriptedPolicyAgent, evaluate, make_task
 from see.world import Trace
 
 
@@ -419,3 +420,29 @@ def test_sighup_takes_the_same_path_as_ctrl_c_unless_inherited_ignored():
     finally:
         for s, handler in previous.items():
             signal.signal(s, handler)
+
+
+def test_interrupt_during_the_baseline_evaluation_leaves_nothing_under_runs(tmp_path, stub_prompts):
+    """An interrupt before the first attempt (here: during the baseline evaluation on a fresh
+    workdir) leaves no runs/iterNNNN at all, so a restart needs no cleanup and is not refused."""
+    work = str(tmp_path)
+    calls: list = []
+
+    def interrupting_evaluate(path):
+        calls.append(path)
+        if len(calls) == 1:
+            raise _Interrupted("killed during the baseline evaluation")
+        return evaluate(path)
+
+    cfg = LoopConfig(workdir=work, max_parallelism=1, fallback_grid=(2, 1), hard_max_grid=(2, 1))
+    task = dataclasses.replace(make_task(work), evaluate=interrupting_evaluate)
+    agent = _RecordingAgent()
+    loop = DreamRSI(cfg, task, agent, ScriptedPolicyAgent())
+    state = (tmp_path / "state.json").read_text()
+    with pytest.raises(_Interrupted):
+        loop.online(1)
+    assert os.listdir(tmp_path / "runs") == []
+    assert not (tmp_path / "baseline_eval.json").exists()
+    assert agent.targets == []
+    assert (tmp_path / "state.json").read_text() == state
+    assert loop.online(1)["probes"] == 4  # the restart runs the whole 2 x (1 + 1) grid

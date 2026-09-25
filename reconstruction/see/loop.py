@@ -168,6 +168,8 @@ class DreamRSI:
         ctx = self._context(self.manifests())
         plan = validate_plan(policy.plan_grid(ctx), ctx)
         grid = (plan.branch_count, plan.refine_count) if plan else tuple(self.c.fallback_grid)
+        # before runs/iterNNNN exists: an interrupt here leaves nothing to clean up
+        baseline = self.baseline_score()
         tree, history = os.path.join(run_dir, "tree"), os.path.join(run_dir, "history")
         os.makedirs(tree, exist_ok=True)
         os.makedirs(history, exist_ok=True)
@@ -180,7 +182,7 @@ class DreamRSI:
             self.discovery_agent,
             tree,
             history,
-            self.baseline_score(),
+            baseline,
             self.c.max_parallelism,
             grid[0],
             grid[1],

@@ -1,0 +1,160 @@
+{
+ "workdir": "/Users/Shared/dream-rsi-runs/d2a-lasso-restart1",
+ "launches": 1,
+ "task": {
+  "name": "lasso_path",
+  "eval_program": "init_program.py"
+ },
+ "agents": {
+  "discovery": {
+   "argv": [
+    "env",
+    "HOME=/Users/Shared/dream-rsi-runs/agy-home",
+    "agy",
+    "-p",
+    "{prompt}",
+    "--model",
+    "gemini-3.1-pro-high",
+    "--dangerously-skip-permissions",
+    "--add-dir",
+    "/Users/Shared/dream-rsi-runs/d2a-lasso"
+   ],
+   "version": "1.2.11"
+  },
+  "policy": {
+   "argv": [
+    "claude",
+    "-p",
+    "{prompt}",
+    "--permission-mode",
+    "acceptEdits",
+    "--setting-sources",
+    "project,local",
+    "--strict-mcp-config",
+    "--add-dir",
+    "/Users/Shared/dream-rsi-runs/d2a-lasso/trace_pool"
+   ],
+   "version": "2.1.283 (Claude Code)"
+  }
+ },
+ "host": {
+  "platform": "macOS-13.7.8-x86_64-i386-64bit-Mach-O",
+  "cpu": "Intel(R) Core(TM) i7-7700K CPU @ 4.20GHz",
+  "cpus": 8,
+  "python": "3.13.15",
+  "compiler": "g++ (MacPorts gcc13 13.4.0_1+stdlib_flag) 13.4.0",
+  "eigen": "3.4.1",
+  "simpletes_commit": "47d3413da1d85dc24341219d47452d2601e56a57"
+ },
+ "caps": {
+  "fallback_grid": [
+   4,
+   3
+  ],
+  "fallback_calls": 16,
+  "hard_max_grid": [
+   6,
+   4
+  ],
+  "hard_max_calls": 30,
+  "paper_calls": {
+   "pro": 110,
+   "flash": 640
+  }
+ },
+ "archive": {
+  "file": "d2a-lasso-restart1.tar.gz",
+  "sha256": "0cc3528026b9ab44683eabbbddde9f00d4221260fe4bc034fdff61a59b324659"
+ },
+ "iterations": [
+  {
+   "iteration": 2,
+   "partial": true,
+   "policy_round": "r0003_t01_m2",
+   "planned_grid": [
+    4,
+    4
+   ],
+   "used_fallback": false,
+   "effective_grid": [
+    4,
+    4
+   ],
+   "grid_calls": 20,
+   "probes": 4,
+   "decision_rounds": 2,
+   "attempts": 4,
+   "successes": 4,
+   "fail_classes": {
+    "ok": 4
+   },
+   "agent_timeouts": 0,
+   "no_program": 0,
+   "evaluator_crashed": 0,
+   "baseline_score": 0.01342660816773724,
+   "best_score": 0.015130320688240672,
+   "error": "KeyboardInterrupt: signal 15",
+   "error_cause": "other"
+  }
+ ],
+ "unfrozen_iterations": [],
+ "versions": [],
+ "out_of_support": {
+  "flagged": [],
+  "flagged_deployed": []
+ },
+ "untouched": {
+  "attempts": 4,
+  "cases": [
+   {
+    "iteration": 2,
+    "cell": "b0a0",
+    "source": "baseline",
+    "fail_class": "ok",
+    "agent_timed_out": false,
+    "evaluated": true,
+    "score": 0.015130320688240672,
+    "source_score": 0.01342660816773724
+   },
+   {
+    "iteration": 2,
+    "cell": "b1a0",
+    "source": "baseline",
+    "fail_class": "ok",
+    "agent_timed_out": false,
+    "evaluated": true,
+    "score": 0.014844389782605966,
+    "source_score": 0.01342660816773724
+   },
+   {
+    "iteration": 2,
+    "cell": "b2a0",
+    "source": "baseline",
+    "fail_class": "ok",
+    "agent_timed_out": false,
+    "evaluated": true,
+    "score": 0.01439341619419185,
+    "source_score": 0.01342660816773724
+   },
+   {
+    "iteration": 2,
+    "cell": "b3a0",
+    "source": "baseline",
+    "fail_class": "ok",
+    "agent_timed_out": false,
+    "evaluated": true,
+    "score": 0.015037524922380897,
+    "source_score": 0.01342660816773724
+   }
+  ]
+ },
+ "empty_batches": {
+  "versions": [],
+  "live": []
+ },
+ "noise": null,
+ "evidence": {
+  "copied": 13,
+  "withheld": []
+ }
+}

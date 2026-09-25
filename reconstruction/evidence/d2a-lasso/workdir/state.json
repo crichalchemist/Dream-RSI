@@ -1,0 +1,68 @@
+{
+ "iteration": 1,
+ "round": 3,
+ "deployed": "/Users/Shared/dream-rsi-runs/d2a-lasso/deployed/iter0002.py",
+ "log": [
+  {
+   "iteration": 1,
+   "live": {
+    "iteration": 1,
+    "policy_round": "initial",
+    "beta": null,
+    "planned_grid": {
+     "branch_count": 4,
+     "refine_count": 3,
+     "reason": "fixed parallel-refine grid (the runner's configured default)"
+    },
+    "used_fallback": false,
+    "effective_grid": {
+     "branch_count": 4,
+     "refine_count": 3
+    },
+    "probes": 16,
+    "decision_rounds": 4,
+    "effective_sequential_rounds": 4,
+    "opened_width": 4,
+    "max_depth": 4,
+    "best_score": 0.016748848379834706,
+    "best_cell": "b1a3",
+    "best_attempt": 3,
+    "baseline_score": 0.01342660816773724,
+    "fail_classes": {
+     "ok": 11,
+     "timeout": 3,
+     "compile_other": 2
+    },
+    "error": null,
+    "started": 1790374968.412968,
+    "finished": 1790377494.782018
+   },
+   "offline": [
+    {
+     "round": "r0001_t01_m0",
+     "m": 0,
+     "score": 0.475,
+     "valid": true,
+     "sha256": "360f19b685f3e1fb2de9332059168c63bcba1e3c0f67e73e6a91f439da23ba4c"
+    },
+    {
+     "round": "r0002_t01_m1",
+     "m": 1,
+     "score": 0.45290037273775124,
+     "valid": true,
+     "sha256": "7e144a1700ff146317ba76444d82a31927d8361cdaf9a8cd35def3aab56b3bf8"
+    },
+    {
+     "round": "r0003_t01_m2",
+     "m": 2,
+     "score": 0.5320616883116883,
+     "valid": true,
+     "sha256": "f4875108a9bc2e67aae76051799da43a1116746bf25e765ad845173f88634424"
+    }
+   ],
+   "selected": "r0003_t01_m2"
+  }
+ ],
+ "deployed_round": "r0003_t01_m2",
+ "deployed_sha256": "f4875108a9bc2e67aae76051799da43a1116746bf25e765ad845173f88634424"
+}

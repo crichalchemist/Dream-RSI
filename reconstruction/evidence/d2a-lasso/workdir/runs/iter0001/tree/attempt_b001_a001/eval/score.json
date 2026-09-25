@@ -1,0 +1,14 @@
+{
+ "n_valid": 0,
+ "n_total": 17,
+ "geo_mean_sol_ms": Infinity,
+ "raw_speed_score": 0.0,
+ "validity": 0.0,
+ "eval_time": 99.91562914848328,
+ "combined_score": 0.0,
+ "error": "Problem 0: sol_time_ms is not finite. Error: TimeoutExpired: Command '['/var/folders/f2/9vss9brn1cg53vqt3d_zjjzr0000gn/T/lasso_path_cpp_cache/lasso_solver_da5e86cacec0']' timed out after 8 seconds\nTraceback (most recent call last):\n  File \"/var/folders/f2/9vss9brn1cg53vqt3d_zjjzr0000gn/T/tmp5yq9i6gi.py\", line 165, in <module>\n    coef_path = _run_binary(binary_path, X, y, alphas_sk, CALL_TIMEOUT)\n  File \"/var/folders/f2/9vss9brn1cg53vqt3d_zjjzr0000gn/T/tmp5yq9i6gi.py\", line 129, in _run_binary\n    proc = subprocess.run([binary_path], input=payload, capture_output=True,\n                          timeout=call_timeout)\n  File \"/opt/local/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py\", line 556, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/local/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py\", line 1222, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/local/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py\", line 2155, in _communicate\n    self._check_timeout(endtime, orig_timeout, stdout, stderr)\n    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/local/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py\", line 1269, in _check_timeout\n    raise TimeoutExpired(\n    ...<2 lines>...\n            stderr=b''.join(stderr_seq) if stderr_seq else None)\nsubprocess.TimeoutExpired: Command '['/var/folders/f2/9vss9brn1cg53vqt3d_zjjzr0000gn/T/lasso_path_cpp_cache/lasso_solver_da5e86cacec0']' timed out after 8 seconds\n",
+ "fail_class": "timeout",
+ "seconds": 589.0647969245911,
+ "agent_returncode": 0,
+ "agent_timed_out": false
+}

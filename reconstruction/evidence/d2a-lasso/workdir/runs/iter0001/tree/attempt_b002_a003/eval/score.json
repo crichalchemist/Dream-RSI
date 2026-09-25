@@ -1,0 +1,14 @@
+{
+ "n_valid": 0,
+ "n_total": 17,
+ "geo_mean_sol_ms": Infinity,
+ "raw_speed_score": 0.0,
+ "validity": 0.0,
+ "eval_time": 0.0,
+ "combined_score": 0.0,
+ "error": "RuntimeError: Program execution failed: RuntimeError: C++ compilation failed:\n/var/folders/f2/9vss9brn1cg53vqt3d_zjjzr0000gn/T/lasso_path_cpp_cache/lasso_solver_b56d833a9261.cpp: In function 'int main()':\n/var/folders/f2/9vss9brn1cg53vqt3d_zjjzr0000gn/T/lasso_path_cpp_cache/lasso_solver_b56d833a9261.cpp:79:27: error: 'nlam' was not declared in this scope\n   [source line withheld]\n",
+ "fail_class": "compile_other",
+ "seconds": 572.126473903656,
+ "agent_returncode": 3,
+ "agent_timed_out": false
+}

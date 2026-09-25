@@ -13,6 +13,7 @@ venv/
 
 # Experiment outputs
 runs/
+!reconstruction/evidence/**/runs/
 logs/
 results/raw/
 wandb/

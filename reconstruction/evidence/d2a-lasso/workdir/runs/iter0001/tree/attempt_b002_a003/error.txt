@@ -1,0 +1,4 @@
+RuntimeError: Program execution failed: RuntimeError: C++ compilation failed:
+/var/folders/f2/9vss9brn1cg53vqt3d_zjjzr0000gn/T/lasso_path_cpp_cache/lasso_solver_b56d833a9261.cpp: In function 'int main()':
+/var/folders/f2/9vss9brn1cg53vqt3d_zjjzr0000gn/T/lasso_path_cpp_cache/lasso_solver_b56d833a9261.cpp:79:27: error: 'nlam' was not declared in this scope
+   [source line withheld]

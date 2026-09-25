@@ -1,0 +1,31 @@
+{
+ "iteration": 2,
+ "policy_round": "r0003_t01_m2",
+ "beta": 0.6,
+ "planned_grid": {
+  "branch_count": 4,
+  "refine_count": 4,
+  "reason": "1 live cycle(s): best found at the last allowed refinement (attempt 3 of 3), 5 non-ok probes, none dominated by hard failures: hold width, deepen by 1; evidence limited to one cycle"
+ },
+ "used_fallback": false,
+ "effective_grid": {
+  "branch_count": 4,
+  "refine_count": 4
+ },
+ "probes": 4,
+ "decision_rounds": 2,
+ "effective_sequential_rounds": 2,
+ "opened_width": 4,
+ "max_depth": 1,
+ "best_score": 0.015130320688240672,
+ "best_cell": "b0a0",
+ "best_attempt": 0,
+ "baseline_score": 0.01342660816773724,
+ "fail_classes": {
+  "ok": 4
+ },
+ "error": "KeyboardInterrupt: signal 15",
+ "started": 1790378321.1810482,
+ "finished": 1790378695.047758,
+ "partial": true
+}

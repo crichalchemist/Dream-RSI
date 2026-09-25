@@ -18,7 +18,7 @@ that file before trusting any number this code produces.
 | Prompts (Listings 1, 2) and discovered Lasso solver (Listing 3) | appendix | regenerated from the PDF, verbatim |
 | Lasso and math tasks | SimpleTES | adapter (`see/tasks.py`) |
 | KernelBench tasks | KernelBench | no adapter |
-| Runs with real LLM agents | Gemini CLI or other | wired (`scripts/run_dream_rsi.py`), not run here |
+| Runs with real LLM agents | Gemini CLI or other | wired (`scripts/run_dream_rsi.py`); run once on Lasso (track D2a: Antigravity CLI discovery with Gemini 3.1 Pro, Claude CLI policy development, 1 of 2 iterations; `evidence/d2a-lasso/report.md`) |
 
 The core package is standard-library Python; `pyproject.toml` extras cover the tools
 (`extract`), the SimpleTES scripts (`lasso`) and the quality gate (`dev`). The package is

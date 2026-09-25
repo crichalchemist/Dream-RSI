@@ -45,7 +45,8 @@ Details: `tools/extract_listings.py`.
   KernelBench problems. The GPU model is not stated either.
 - **Gemini CLI** is the discovery agent. Its invocation flags, tools, timeouts and sampling
   settings are not given. `scripts/run_dream_rsi.py` records each launch's agent argv and CLI
-  version in `<workdir>/launches.jsonl`.
+  version in `<workdir>/launches.jsonl`. The D2a run used the Antigravity CLI instead, because
+  the Gemini CLI refused this account's login (§5, "D2a run").
 
 ## 3. Reconstruction choices (the paper is silent)
 
@@ -144,6 +145,60 @@ Gemini-3.1-Pro row (4.0, 1.9, 7.5, 14.0, 11.5) than to its Flash row
 **Evaluation noise.** Re-evaluating an unchanged program moves the Lasso score by about
 2% (0.0288–0.0294). Replay stores one sample per node, so the replay simulator inherits
 that noise without any estimate of it.
+
+**D2a run (2026-09-25).** One real-agent run on the Lasso task on a second machine, Intel(R)
+Core(TM) i7-7700K CPU @ 4.20GHz (8 threads), g++ (MacPorts gcc13 13.4.0_1+stdlib_flag) 13.4.0,
+Eigen 3.4.1, SimpleTES 47d3413da1d8. The Antigravity CLI (`agy`) 1.2.11 with
+`gemini-3.1-pro-high` drove discovery, and Claude CLI 2.1.283 drove policy development. Both
+were isolated from the owner's global CLI configuration. The paper's Gemini CLI refused this
+account's login ("no longer supported for Gemini Code Assist for individuals"). The run took 1
+launch, with a 4 x 3 fallback grid (16 calls), 6 x 4 hard caps (30 calls) and three policy
+versions per iteration. It completed 1 of 2 iterations.
+
+Iteration 2 was stopped during its second round. Its frozen trace holds 4 probes. The second
+round's 4 attempts had been evaluated on disk but never returned to the policy. Concurrent
+`agy` calls sharing one home had corrupted the token file when the hourly access token
+expired. The agent lost authentication, so every later attempt left its program untouched. A
+restart was refused by the account's individual
+Gemini 3.1 Pro quota (HTTP 429), which the run had spent in about one iteration. The full report
+and the evidence subset are in `evidence/d2a-lasso/`, and the stopped iteration's are in
+`evidence/d2a-lasso/restart1/`. The workdir archive stays off the repository (sha256
+`281b49ad4c5c41129e3bb1cd1fe64625fdb1ec99c3baccffa39ea8ea5db3cb2c`).
+
+- Per-round calls:
+  - iteration 1 (the initial policy) planned 4 x 3 without the fallback and spent 16 probes in
+    4 rounds;
+  - the stopped iteration 2 (the deployed version) planned 4 x 4 (20 calls). Its frozen trace
+    holds 4 probes, and 8 attempts were evaluated on disk.
+
+  The caps here are 16 and 30; the paper's are 110 and 640.
+- Out-of-support replay: none. None of the 3 versions replayed on clipped episodes (12 episodes
+  each, none clipped), so none of the deployed ones did either.
+- Untouched programs:
+  - 1 of 16 attempts left its resume source byte for byte (iteration 1, b2a3). Its source was
+    the parent, its fail class `compile_other`, and the agent did not time out; it scored 0,
+    against a source score of 0.
+  - In the stopped iteration, all 8 attempts evaluated on disk did (b0a0–b3a1, all `ok`),
+    because the agent never ran; each program is the baseline's. The report counts the 4 in the
+    frozen trace.
+- Empty batches: none among the versions, and none among the live iterations.
+- Health of iteration 1:
+  - 16 attempts and 11 successes; fail classes ok 11, timeout 3, compile_other 2;
+  - 2 agent timeouts, 0 attempts without a program, 0 evaluator crashes;
+  - baseline 0.0134266, best 0.0167488.
+
+  Version rewards were m0 0.475, m1 0.4529 and m2 0.532062; m2 was deployed.
+- Evaluation noise in the run: the stopped iteration's eight evaluations of the unchanged
+  baseline scored 0.0132689–0.0151303, a 14.0% spread. That runs from 1.2% below to 12.7% above
+  the baseline's own 0.0134266 at run start. Iteration 1's best is 24.7% above that baseline
+  score, but only 10.7% above the highest of those re-evaluations.
+- Smoke test on this host (`host.json`, two runs each), against the Xeon's 2% above:
+
+  | Program | Valid | Geo-mean ms | Spread |
+  |---|---|---|---|
+  | Listing 3 | 17/17, 17/17 | 63.03, 62.36 | 1.1% |
+  | glmnet port | 17/17, 17/17 | 74.24, 70.50 | 5.3% |
+  | SimpleTES best | 17/17, 17/17 | 62.88, 66.39 | 5.6% |
 
 ## 6. Reading the reported results
 

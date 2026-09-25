@@ -1,0 +1,32 @@
+{
+ "iteration": 1,
+ "policy_round": "initial",
+ "beta": null,
+ "planned_grid": {
+  "branch_count": 4,
+  "refine_count": 3,
+  "reason": "fixed parallel-refine grid (the runner's configured default)"
+ },
+ "used_fallback": false,
+ "effective_grid": {
+  "branch_count": 4,
+  "refine_count": 3
+ },
+ "probes": 16,
+ "decision_rounds": 4,
+ "effective_sequential_rounds": 4,
+ "opened_width": 4,
+ "max_depth": 4,
+ "best_score": 0.016748848379834706,
+ "best_cell": "b1a3",
+ "best_attempt": 3,
+ "baseline_score": 0.01342660816773724,
+ "fail_classes": {
+  "ok": 11,
+  "timeout": 3,
+  "compile_other": 2
+ },
+ "error": null,
+ "started": 1790374968.412968,
+ "finished": 1790377494.782018
+}

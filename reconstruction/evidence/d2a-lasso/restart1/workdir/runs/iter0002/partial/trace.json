@@ -1,0 +1,76 @@
+{
+ "format": "dream-rsi-trace/1",
+ "trace_id": "iter0002-partial",
+ "baseline_score": 0.01342660816773724,
+ "max_parallelism": 4,
+ "grid": {
+  "branch_count": 4,
+  "refine_count": 4
+ },
+ "info": {
+  "iteration": 2,
+  "partial": true
+ },
+ "cells": [
+  {
+   "branch": 0,
+   "attempt": 0,
+   "seq": 0,
+   "score": 0.015130320688240672,
+   "evaluated": true,
+   "valid": true,
+   "fail_class": "ok",
+   "error": null,
+   "n_valid": 17,
+   "n_total": 17,
+   "tags": {
+    "direction": ""
+   }
+  },
+  {
+   "branch": 1,
+   "attempt": 0,
+   "seq": 1,
+   "score": 0.014844389782605966,
+   "evaluated": true,
+   "valid": true,
+   "fail_class": "ok",
+   "error": null,
+   "n_valid": 17,
+   "n_total": 17,
+   "tags": {
+    "direction": ""
+   }
+  },
+  {
+   "branch": 2,
+   "attempt": 0,
+   "seq": 2,
+   "score": 0.01439341619419185,
+   "evaluated": true,
+   "valid": true,
+   "fail_class": "ok",
+   "error": null,
+   "n_valid": 17,
+   "n_total": 17,
+   "tags": {
+    "direction": ""
+   }
+  },
+  {
+   "branch": 3,
+   "attempt": 0,
+   "seq": 3,
+   "score": 0.015037524922380897,
+   "evaluated": true,
+   "valid": true,
+   "fail_class": "ok",
+   "error": null,
+   "n_valid": 17,
+   "n_total": 17,
+   "tags": {
+    "direction": ""
+   }
+  }
+ ]
+}

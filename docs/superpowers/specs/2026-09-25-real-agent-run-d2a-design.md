@@ -279,3 +279,45 @@ spike, and each overrides the section it names.
 8. **Controller-run tasks** (section 9). The smoke test, the run and the evidence commit are
    run by the session itself, never by a subagent. The first two need the owner's go, and the
    third has the owner's redaction decision in the middle.
+
+## 12. Amendments during the run (2026-09-25)
+
+These override section 1 and amendment 2 for the run that was made. GAPS §5, "D2a run", records
+the outcome.
+
+1. **Discovery agent: the Antigravity CLI** (owner decision).
+   - Why: the owner's Gemini CLI login had expired (`invalid_grant`). A fresh login was then
+     refused with "This client is no longer supported for Gemini Code Assist for individuals".
+   - Discovery ran `agy -p {prompt} --model gemini-3.1-pro-high --dangerously-skip-permissions
+     --add-dir <workdir>` under a dedicated `HOME` holding only the owner's Antigravity token and
+     a minimal settings file.
+   - The pre-flight also checked that `agy plugin list` and `agy mcp list` were empty, and that
+     no `.agents/rules` sat above the workdir.
+   - agy's leak probe asked for "Ad-Hoc DSLs", a phrase in the owner's `~/.gemini/GEMINI.md`.
+     "Rule 14" is not in that file.
+2. **Auth must not be shared between concurrent calls.** In the run, parallel `agy` calls shared
+   one `HOME`. At the hourly token refresh they corrupted the token file, and iteration 2's
+   attempts ran unauthenticated.
+   - The fix gives each call its own `HOME`, seeded from a read-only base.
+   - It was verified with four concurrent calls, but never used in a launch.
+   - D2b starts from it.
+3. **Stopped on quota** (owner decision, under the stop rule of section 4). A restart failed its
+   pre-flight on the account's individual Gemini 3.1 Pro quota (HTTP 429), so the run ended
+   with 1 of 2 iterations. The stopped iteration is reported from its aside directory.
+4. **Evidence scan.**
+   - The scan also counts any `@` address, not only the owner's git email, because the
+     Antigravity account's address differs.
+   - It also counts compiler-quoted source lines (`NN | code`), which neither `CPP_CODE` nor
+     `#include` catches. One agent-written line was quoted six times, in 5 files. It was
+     replaced by `[source line withheld]`, together with its caret line, under the constraint
+     that no C++ source enters the repository.
+   - The owner chose redaction (b): the home prefix became `~` in the two copied
+     `launches.jsonl` files.
+   - `report_run.py --copy-evidence` still withholds only whole files quoting `CPP_CODE`.
+     D2b should redact these lines at copy time.
+5. **Pre-flight hardening.** A Gemini CLI call hung for ten minutes at a browser-login prompt
+   behind `| tail`. From then on:
+   - each pre-flight agent call runs under a 300 s watchdog, with stdin from `/dev/null`;
+   - the pre-flight writes its output to a log file;
+   - a Gemini CLI call gets `NO_BROWSER=true`, so a lapsed login exits (41) at once. This became
+     moot when agy replaced the Gemini CLI.

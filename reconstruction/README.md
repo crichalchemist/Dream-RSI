@@ -46,6 +46,7 @@ and `eigen3`, passed as `--eigen-include /opt/local/include/eigen3` (the directo
 ```bash
 git clone --depth 1 https://github.com/wq-will/SimpleTES ../SimpleTES
 python scripts/verify_lasso.py --simpletes ../SimpleTES --repeats 2  # macOS: --eigen-include DIR
+python scripts/verify_lasso.py --simpletes ../SimpleTES --downstream --gisette
 ```
 
 Run the loop on a paper task with real coding agents. This spends real API

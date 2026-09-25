@@ -37,7 +37,9 @@ python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tm
   (langsmith) that crashes collection; if you must run pytest outside the venv, prefix
   `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`.
 - Paper-task scripts need `git clone --depth 1 https://github.com/wq-will/SimpleTES ../SimpleTES`
-  plus g++, OpenMP and system Eigen (`libeigen3-dev`). `scripts/verify_lasso.py` scores Listing 3
+  plus a `g++` with OpenMP first on `PATH` and Eigen 3 (Linux: `libeigen3-dev`; macOS: MacPorts
+  `gcc13` selected with `sudo port select --set gcc mp-gcc13`, and `eigen3` passed as
+  `--eigen-include /opt/local/include/eigen3`). `scripts/verify_lasso.py` scores Listing 3
   with SimpleTES's evaluator; `scripts/run_dream_rsi.py` runs the loop with real coding agents and
   spends real API budget (~110 discovery calls per round at the paper's default grid).
 

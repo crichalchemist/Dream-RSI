@@ -37,17 +37,20 @@ python -m pytest -q                       # whole suite; exact count pinned in .
 python -m see demo --workdir /tmp/drsi    # whole loop on a toy task, scripted agents
 ```
 
-Check the paper's Lasso solver against SimpleTES's own evaluator (needs g++,
-OpenMP and `libeigen3-dev`):
+Check the paper's Lasso solver against SimpleTES's own evaluator. It needs a `g++` with
+OpenMP first on `PATH` and Eigen 3: on Linux, `g++` and `libeigen3-dev`; on macOS, where
+Apple's `g++` is clang without OpenMP, MacPorts `gcc13` (`sudo port select --set gcc mp-gcc13`)
+and `eigen3`, passed as `--eigen-include /opt/local/include/eigen3` (the directory holding
+`Eigen/`; it covers the search score, not `--downstream`):
 
 ```bash
 git clone --depth 1 https://github.com/wq-will/SimpleTES ../SimpleTES
-python scripts/verify_lasso.py --simpletes ../SimpleTES --repeats 2
-python scripts/verify_lasso.py --simpletes ../SimpleTES --downstream --gisette
+python scripts/verify_lasso.py --simpletes ../SimpleTES --repeats 2  # macOS: --eigen-include DIR
 ```
 
 Run the loop on a paper task with real coding agents. This spends real API
-budget: about 110 discovery calls per round at the paper's 3.1-Pro setting.
+budget: about 110 discovery calls per round at the paper's 3.1-Pro setting. On macOS add
+`--eigen-include` as above.
 
 ```bash
 python scripts/run_dream_rsi.py --simpletes ../SimpleTES --task lasso_path \

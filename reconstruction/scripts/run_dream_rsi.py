@@ -38,6 +38,11 @@ def main(argv=None):
     ap.add_argument("--grid", type=int, nargs=2, default=(10, 10), help="fallback W R")
     ap.add_argument("--hard-max", type=int, nargs=2, default=(32, 19))
     ap.add_argument("--objective", choices=OBJECTIVES, default="pareto")
+    ap.add_argument(
+        "--eigen-include",
+        help="directory holding Eigen/ for the Lasso evaluator, e.g. /opt/local/include/eigen3 "
+        "(default: the evaluator's /usr/include/eigen3)",
+    )
     a = ap.parse_args(argv)
     os.makedirs(a.workdir, exist_ok=True)
     cfg = LoopConfig(
@@ -51,7 +56,7 @@ def main(argv=None):
     )
     loop = DreamRSI(
         cfg,
-        simpletes_task(a.simpletes, a.task, a.workdir),
+        simpletes_task(a.simpletes, a.task, a.workdir, eigen_include=a.eigen_include),
         agent(a.discovery_agent, a.agent_timeout),
         agent(a.policy_agent, a.agent_timeout),
     )

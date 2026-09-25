@@ -38,7 +38,8 @@ Details: `tools/extract_listings.py`.
   (sum-difference, circle packing n=26, first autocorrelation). The `n_valid`/`n_total`
   fields of Listing 2's `Observation` match this evaluator's output, so Dream-RSI very
   likely wraps SimpleTES evaluators. SimpleTES's vendored Eigen lacks `Eigen/Core` (its
-  `.gitignore` drops it), so compilation needs system Eigen.
+  `.gitignore` drops it), so compilation needs system Eigen or a host Eigen root passed as
+  `--eigen-include` (§3, "Lasso host toolchain").
 - **KernelBench** supplies the four kernel tasks. The paper names "VGG16, LayerNorm, ConvDiv,
   ConvMax" but not their problem ids or levels, and the last two names match several
   KernelBench problems. The GPU model is not stated either.
@@ -79,6 +80,7 @@ Details: `tools/extract_listings.py`.
 | Two objectives, two episode sets | Eq. (1) per episode; Listing 2 sweeps beta | `pareto.reward` is computed from the beta-grid episodes (one per trace per beta) and `eq1.V` from one extra episode per trace at the policy's baked-in default beta, the one a live rollout uses; an error in either set invalidates both (pinned in `test_ledger.py::test_pareto_comes_from_the_beta_grid_and_eq1_from_the_default_beta_episode` and `::test_an_error_in_either_episode_set_invalidates_both_objectives`) | betas and λ as above; the split is fixed in `see/objective.py` (`beta_sweep`) |
 | Trace ceiling | not named | the best successful cell's score, else the baseline; failed and timed-out cells keep their scores in the trace but never raise it; an out-of-support plan is clipped to the trace and scored as the clipped plan, with `out_of_support` reported for information (pinned in `test_ledger.py::test_the_trace_ceiling_counts_only_successful_cells` and `::test_an_out_of_support_plan_is_flagged_and_scored_as_its_clipped_grid`) | fixed in `see/world.py` (`Trace.ceiling`, `ReplayQuestion`); zero-versus-clip is D2 |
 | The floor and π₁ | Sec. 4: π₁ is parallel refine | `policy_dev/history/baseline/` is re-swept on the current pool every `offline()` for reference and is never a candidate; `LoopConfig.initial_policy` is copied to `deployed/iter0001.py` only when the workdir is created, so a resumed run keeps the policy it started with (pinned in `test_ledger.py::test_the_floor_is_reswept_for_reference_and_never_deployed` and `::test_the_initial_policy_seeds_only_a_fresh_workdir`) | `LoopConfig.initial_policy` (no flag); the floor is fixed in `see/loop.py` (`offline`) |
+| Lasso host toolchain | not discussed; SimpleTES's evaluator compiles with a hardcoded `g++ -O3 -march=native -std=c++17`, with `-I<task dir>/eigen` when that directory exists, else `-I/usr/include/eigen3` | the adapter does not copy SimpleTES's vendored `eigen/` (it lacks `Eigen/Core`); `eigen_include` makes `task/src/eigen` a symlink to a host Eigen root, the directory the evaluator tries first, refusing a root without `Eigen/` and an existing link that points elsewhere (a restart reuses its own link); the compiler is whatever `g++` resolves to on `PATH`: on macOS Apple's `g++` is clang without OpenMP, so MacPorts gcc is selected with `port select` (pinned in `test_tasks.py::test_eigen_include_is_where_the_evaluator_looks_first` and `::test_a_restart_reuses_its_eigen_link_and_refuses_a_different_one`) | `simpletes_task(eigen_include=)`; `run_dream_rsi.py --eigen-include`; `verify_lasso.py --eigen-include` (search score only); the compiler: `PATH` |
 
 ## 4. Places where the paper contradicts itself
 

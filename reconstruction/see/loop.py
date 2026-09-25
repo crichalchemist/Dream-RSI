@@ -41,6 +41,11 @@ PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASELINE_POLICY = os.path.join(PKG_ROOT, "see", "policies", "parallel_refine.py")
 
 
+def archive_name(round_no: int, t: int, m: int) -> str:
+    """The policy_dev/history/ entry for version m of iteration t; rounds are numbered globally."""
+    return f"r{round_no:04d}_t{t:02d}_m{m}"
+
+
 @dataclasses.dataclass
 class LoopConfig:
     workdir: str
@@ -132,12 +137,17 @@ class DreamRSI:
         """Stage 1: the deployed policy drives discovery; the tree is frozen into the pool."""
         run_dir = os.path.join(self.w, "runs", f"iter{t:04d}")
         out = os.path.join(self.pool, f"iter{t:04d}")
-        for partial in (run_dir, out):  # runs/ is created first, trace_pool/ last
-            if os.path.exists(partial):
-                raise RuntimeError(
-                    f"{partial} exists: iteration {t} was interrupted or already ran; "
-                    "delete it, do not merge into it"
-                )
+        # runs/ is created first and trace_pool/ last; the first archive is what a restart's
+        # offline() would recreate, because the round counter is persisted only on success
+        first_archive = os.path.join(self.dev_history, archive_name(self.state["round"] + 1, t, 0))
+        existing = [p for p in (run_dir, out, first_archive) if os.path.exists(p)]
+        if existing:
+            one = len(existing) == 1
+            raise RuntimeError(
+                f"{' and '.join(existing)} {'exists' if one else 'exist'}: iteration {t} was "
+                f"interrupted or already ran; delete {'it' if one else 'them'}, do not merge into "
+                f"{'it' if one else 'them'}"
+            )
         policy = load_policy(self.state["deployed"])(None)  # baked-in default beta
         ctx = self._context(self.manifests())
         plan = validate_plan(policy.plan_grid(ctx), ctx)
@@ -254,7 +264,7 @@ class DreamRSI:
 
     def _archive(self, method_path: str, t: int, m: int, agent_run=None) -> dict:
         self.state["round"] += 1
-        name = f"r{self.state['round']:04d}_t{t:02d}_m{m}"
+        name = archive_name(self.state["round"], t, m)
         rdir = os.path.join(self.dev_history, name)
         os.makedirs(rdir, exist_ok=True)
         archived = os.path.join(rdir, "method.py")

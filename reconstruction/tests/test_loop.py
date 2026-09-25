@@ -7,7 +7,7 @@ import pytest
 
 from see.live import LiveQuestion
 from see.loader import load_policy
-from see.loop import DreamRSI, LoopConfig
+from see.loop import DreamRSI, LoopConfig, archive_name
 from see.objective import run_episode
 from see.pool import context_factory, load_pool
 from see.toy import ScriptedDiscoveryAgent, ScriptedPolicyAgent, make_task
@@ -358,3 +358,30 @@ def test_sweep_timeout_kills_the_subprocess_group_and_scores_invalid(tmp_path, p
     assert process_gone(int(pid_file.read_text()))
     with open(rdir / "proposal_results" / "beta_sweep.json") as f:
         assert json.load(f)["valid"] is False
+
+
+def test_restart_refuses_when_the_first_archive_dir_exists(tmp_path, stub_prompts):
+    """A crash in offline() leaves state["round"] unsaved, so a restart would recreate and
+    overwrite r{round+1}_tNN_m0; the guard refuses first, naming every leftover at once."""
+    agent = _RecordingAgent()
+    loop = _interruptible_loop(str(tmp_path), agent)
+    archive = tmp_path / "policy_dev" / "history" / archive_name(1, 1, 0)
+    assert archive.name == "r0001_t01_m0"  # the name _archive gives iteration 1's version 0
+    archive.mkdir(parents=True)
+    (archive / "method.py").write_text("# archived by the crashed run\n")
+    state = (tmp_path / "state.json").read_text()
+    assert json.loads(state)["round"] == 0
+    with pytest.raises(
+        RuntimeError, match=r"history/r0001_t01_m0 exists: .*delete it, do not merge into it"
+    ):
+        loop.online(1)
+    assert agent.targets == []
+    (tmp_path / "runs" / "iter0001").mkdir()
+    (tmp_path / "trace_pool" / "iter0001").mkdir()
+    with pytest.raises(
+        RuntimeError,
+        match=r"runs/iter0001 and .*trace_pool/iter0001 and .*r0001_t01_m0 exist: .*delete them",
+    ):
+        loop.online(1)
+    assert (archive / "method.py").read_text() == "# archived by the crashed run\n"
+    assert (tmp_path / "state.json").read_text() == state

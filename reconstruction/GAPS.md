@@ -175,7 +175,7 @@ that noise without any estimate of it.
 - KernelBench problem ids and a GPU for the kernel results.
 - Whether the trace-pool tamper window during `offline()` should close the same way
   `policy_dev/history/` now does: `_archive`'s sha256 (§3 above) covers only the archived
-  `method.py`, not `trace_pool/iterNNNN/trace.json`, and `_sweep` (`see/loop.py:259-311`)
+  `method.py`, not `trace_pool/iterNNNN/trace.json`, and `_sweep` (`see/loop.py:259-310`)
   replay-scores every version directly against the whole pool with no digest on any frozen tree;
   the sweep subprocess writes its own `sha256` of the method file into `beta_sweep.json`
   (`see/__main__.py:17,34`), but `_archive`/`_deploy` never compare it to the archive digest, so
@@ -185,4 +185,4 @@ that noise without any estimate of it.
   agent with `cwd=self.tree_dir` (`:194`), so it can read every sibling `attempt_*` directory's
   actual program and eval output — not just the proposals Listing 1 names. On an agent crash
   (`:195-198`), only the crashed attempt's own program file is removed, so other files that
-  crashed agent wrote stay visible to later sibling attempts.
+  the crashed agent wrote stay visible to later sibling attempts.

@@ -97,5 +97,7 @@ prompts from `generated/`, which is why extraction is a prerequisite.
   exists. Delete the partial `runs/iterNNNN/` (and the matching `trace_pool/` entry if present)
   and the aborted iteration's `policy_dev/history/r*_tNN_m*` directories, then restart — the
   round counter is persisted only on success, so a restart would otherwise recreate and
-  overwrite those archive names. Do not merge into it.
+  overwrite those archive names. Do not merge into it. Before deleting, confirm no `see sweep`
+  subprocess from the killed run is still running: `_sweep` starts it with `subprocess.run`,
+  which outlives a killed parent and keeps writing under `policy_dev/history/`.
 - `*.local.md` files are private maintainer notes and are gitignored.

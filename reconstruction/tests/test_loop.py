@@ -3,11 +3,14 @@ import hashlib
 import json
 import os
 import signal
+import subprocess
+import sys
 import time
 
 import pytest
 
 import see.live
+import see.prompts
 from see.live import LiveQuestion
 from see.loader import load_policy
 from see.loop import DreamRSI, LoopConfig, archive_name, install_signal_handlers
@@ -407,7 +410,9 @@ def test_sweep_timeout_kills_the_subprocess_group_and_scores_invalid(tmp_path, p
     """A replay subprocess that hangs is killed with everything it forked, and the version
     scores invalid exactly as a crashed one does."""
     work = str(tmp_path)
-    cfg = LoopConfig(workdir=work, sweep_timeout=1.0, kill_grace=0.2)
+    # 2 s covers interpreter startup, importing see and hashing before the "policy" forks on a
+    # loaded runner; the test's own bound below is what keeps a regression visible
+    cfg = LoopConfig(workdir=work, sweep_timeout=2.0, kill_grace=0.2)
     loop = DreamRSI(cfg, make_task(work), ScriptedDiscoveryAgent(), ScriptedPolicyAgent())
     rdir = tmp_path / "hang"
     rdir.mkdir()
@@ -420,9 +425,9 @@ def test_sweep_timeout_kills_the_subprocess_group_and_scores_invalid(tmp_path, p
     )
     started = time.time()
     report = loop._sweep(str(method), str(rdir))
-    assert time.time() - started < 4.0
+    assert time.time() - started < 5.0  # the "policy" sleeps 30 s
     assert report["valid"] is False
-    assert report["errors"] == ["RuntimeError: sweep timed out after 1.0s"]
+    assert report["errors"] == ["RuntimeError: sweep timed out after 2.0s"]
     assert report["pareto"]["reward"] == float("-inf")
     assert process_gone(int(pid_file.read_text()))
     with open(rdir / "proposal_results" / "beta_sweep.json") as f:
@@ -505,6 +510,49 @@ def test_sighup_takes_the_same_path_as_ctrl_c_unless_inherited_ignored():
     finally:
         for s, handler in previous.items():
             signal.signal(s, handler)
+
+
+def test_the_demo_entry_point_maps_sigterm_to_the_partial_freeze(tmp_path, stub_prompts):
+    """`kill <pid>` of a real `python -m see demo` run ends it the way Ctrl-C does: the process
+    dies by KeyboardInterrupt (re-raised as SIGINT, not killed by SIGTERM), the partial tree is
+    frozen under runs/, nothing reaches the pool and state.json is untouched. The entry point runs
+    in a subprocess with the stub prompts and the scripted agent slowed to 0.2 s per attempt, so
+    the signal lands while the first batch is in flight."""
+    work = tmp_path / "work"
+    program = (
+        "import sys, time\n"
+        "import see.prompts, see.toy\n"
+        f"see.prompts.GENERATED = {see.prompts.GENERATED!r}\n"
+        "_call = see.toy.ScriptedDiscoveryAgent.__call__\n"
+        "see.toy.ScriptedDiscoveryAgent.__call__ = "
+        "lambda self, *a, **k: (time.sleep(0.2), _call(self, *a, **k))[1]\n"
+        "from see.__main__ import main\n"
+        "main(['demo', '--workdir', sys.argv[1], '--iterations', '1'])\n"
+    )
+    p = subprocess.Popen(
+        [sys.executable, "-c", program, str(work)],
+        cwd=str(tmp_path),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    tree = work / "runs" / "iter0001" / "tree"
+    deadline = time.time() + 20.0
+    while not any(tree.glob("attempt_*")) and time.time() < deadline:
+        time.sleep(0.05)  # until the first attempt is in flight
+    assert any(tree.glob("attempt_*")), p.communicate(timeout=20.0)[1][-2000:]
+    state = (work / "state.json").read_text()
+    p.send_signal(signal.SIGTERM)
+    _, err = p.communicate(timeout=20.0)
+    assert p.returncode == -signal.SIGINT, err[-2000:]
+    assert "KeyboardInterrupt: signal 15" in err
+    partial = work / "runs" / "iter0001" / "partial"
+    assert Trace.load(str(partial / "trace.json")).trace_id == "iter0001-partial"
+    with open(partial / "live_cycle_manifest.json") as f:
+        manifest = json.load(f)
+    assert manifest["partial"] is True and manifest["error"] == "KeyboardInterrupt: signal 15"
+    assert os.listdir(work / "trace_pool") == []
+    assert (work / "state.json").read_text() == state
 
 
 def test_interrupt_during_the_baseline_evaluation_leaves_nothing_under_runs(tmp_path, stub_prompts):

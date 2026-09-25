@@ -80,6 +80,28 @@ class _Interrupted(BaseException):
     """Stands in for KeyboardInterrupt, which pytest intercepts itself."""
 
 
+class _AlarmOnce:
+    """Send SIGALRM to this process from a helper thread once ``ready()`` holds, so the signal
+    lands while the stand-ins are known to be running rather than after a fixed timer that races
+    shell startup; ``cancel()`` makes sure no late alarm lands after the handler is restored."""
+
+    def __init__(self, ready):
+        self._ready, self._lock, self._done = ready, threading.Lock(), False
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        deadline = time.time() + 5.0
+        while not self._ready() and time.time() < deadline:
+            time.sleep(0.02)
+        with self._lock:
+            if not self._done:
+                os.kill(os.getpid(), signal.SIGALRM)
+
+    def cancel(self):
+        with self._lock:
+            self._done = True
+
+
 def test_interrupt_during_an_agent_call_kills_its_process_group(tmp_path, process_gone):
     """An interrupt raised in the calling thread (Ctrl-C during the policy-agent call) does not
     leave the agent CLI and its children running: the group dies before the interrupt propagates."""
@@ -91,13 +113,13 @@ def test_interrupt_during_an_agent_call_kills_its_process_group(tmp_path, proces
         raise _Interrupted("SIGALRM while the agent was running")
 
     previous = signal.signal(signal.SIGALRM, interrupt)
-    signal.setitimer(signal.ITIMER_REAL, 0.3)  # the stand-in has forked its child by then
+    alarm = _AlarmOnce(lambda: bool(grandchild_pids(pid_dir)))  # once the stand-in has forked
     started = time.time()
     try:
         with pytest.raises(_Interrupted):
             agent("p", cwd=str(tmp_path), target=str(tmp_path))
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
+        alarm.cancel()
         signal.signal(signal.SIGALRM, previous)
     assert time.time() - started < 2.0  # not the 3 s timeout
     [pid] = grandchild_pids(pid_dir)
@@ -105,17 +127,8 @@ def test_interrupt_during_an_agent_call_kills_its_process_group(tmp_path, proces
 
 
 # An agent that prints half a multibyte character, then forks a child that leaves the process
-# group (setsid) but keeps the inherited pipes, then hangs.
-ESCAPEE = (
-    "import subprocess, sys, time\n"
-    "sys.stdout.buffer.write(b'\\xe2\\x82')\n"
-    "sys.stdout.flush()\n"
-    "subprocess.Popen([sys.executable, '-c', 'import os, time; os.setsid(); time.sleep(3)'])\n"
-    "time.sleep(30)\n"
-)
-
-# The escapee stand-in whose escapee touches a marker file (the agent's argv[2]) once it has left
-# the process group, so a test can act only after the escape has really happened.
+# group (setsid) but keeps the inherited pipes, then hangs. The escapee touches a marker file (the
+# agent's argv[2]) once it has left the group, so a test can prove the escape really happened.
 ESCAPEE_THEN_MARK = (
     "import subprocess, sys, time\n"
     "sys.stdout.buffer.write(b'\\xe2\\x82')\n"
@@ -129,11 +142,17 @@ ESCAPEE_THEN_MARK = (
 def test_timeout_returns_even_when_an_escapee_holds_the_pipes(tmp_path):
     """A descendant outside the group is not killed, by design; it must not make the timed-out
     call wait for it, and the bytes it left half-written must not raise."""
-    agent = CommandAgent([sys.executable, "-c", ESCAPEE, "{prompt}"], timeout=0.3, kill_grace=0.2)
+    marker = tmp_path / "escapee-forked"
+    agent = CommandAgent(
+        [sys.executable, "-c", ESCAPEE_THEN_MARK, "{prompt}", str(marker)],
+        timeout=0.3,
+        kill_grace=0.2,
+    )
     started = time.time()
     result = agent("p", cwd=str(tmp_path), target=str(tmp_path))
     assert time.time() - started < 2.0  # the escapee sleeps 3 s
     assert result["timed_out"] is True and result["stdout"] == ""
+    assert marker.exists()  # an escapee really was holding the pipes while the call returned
 
 
 def test_terminate_kills_live_agents_and_refuses_new_calls(tmp_path, process_gone):
@@ -230,19 +249,14 @@ def test_interrupt_kills_running_agents_and_records_nothing(tmp_path, stub_promp
     def interrupt(signum, frame):
         raise _Interrupted("SIGALRM while two agents were running")
 
-    def once_both_are_running():  # the signal lands only after both stand-ins have forked
-        deadline = time.time() + 5.0
-        while len(grandchild_pids(pid_dir)) < 2 and time.time() < deadline:
-            time.sleep(0.02)
-        os.kill(os.getpid(), signal.SIGALRM)
-
     previous = signal.signal(signal.SIGALRM, interrupt)
-    threading.Thread(target=once_both_are_running, daemon=True).start()
+    alarm = _AlarmOnce(lambda: len(grandchild_pids(pid_dir)) >= 2)  # once both have forked
     started = time.time()
     try:
         with pytest.raises(_Interrupted):
             q.probe_batch(q.legal_roots())
     finally:
+        alarm.cancel()
         signal.signal(signal.SIGALRM, previous)
     assert time.time() - started < 2.0  # not the 3 s timeout
     pids = grandchild_pids(pid_dir)

@@ -179,3 +179,59 @@ def test_interrupt_leaves_a_partial_run_that_a_restart_refuses(tmp_path, stub_pr
         restart.online(1)
     assert restart_agent.targets == []
     assert (tmp_path / "state.json").read_text() == state
+
+
+def test_one_malformed_evaluator_result_fails_one_cell_not_the_batch(tmp_path, stub_prompts):
+    """Garbage an evaluator returns (not raises) costs its own cell, not its siblings'."""
+    task = make_task(str(tmp_path))
+    real_evaluate = task.evaluate
+    malformed = {  # each of these used to abort the whole batch it was evaluated in
+        "attempt_b001_a000": {"combined_score": "n/a", "validity": 1.0},
+        "attempt_b001_a001": {"combined_score": 3.0, "error": 42},
+    }
+
+    def malformed_on_branch_1(path: str) -> dict:
+        node = os.path.basename(os.path.dirname(path))
+        return malformed[node] if node in malformed else real_evaluate(path)
+
+    task.evaluate = malformed_on_branch_1
+    xs = {
+        "attempt_b000_a000": 2.0,
+        "attempt_b001_a000": 3.0,
+        "attempt_b002_a000": 4.0,
+        "attempt_b000_a001": 5.0,
+        "attempt_b001_a001": 6.0,
+        "attempt_b002_a001": 7.0,
+    }
+
+    def writes_a_distinct_program(prompt, *, cwd, target):
+        with open(os.path.join(target, task.eval_program), "w") as f:
+            json.dump({"x": xs[os.path.basename(target)]}, f)
+        return {"returncode": 0}
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    q = LiveQuestion(
+        task,
+        writes_a_distinct_program,
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=3,
+        branch_count=3,
+        refine_count=1,
+    )
+    obs = q.probe_batch(q.legal_roots())  # round 1: branch 1's score is not a number
+    assert [o.cell_id for o in obs] == ["b0a0", "b1a0", "b2a0"]
+    assert [(o.score, o.evaluated) for o in obs] == [(2.0, True), (0.0, False), (4.0, True)]
+    assert obs[0].fail_class == obs[2].fail_class == "ok"  # the siblings keep their results
+    assert obs[1].error is not None and "malformed evaluator result" in obs[1].error
+    assert "'n/a'" in obs[1].error  # the error names what was malformed
+    with open(tree / "attempt_b001_a000" / "eval" / "score.json") as f:
+        assert json.load(f)["evaluator_crashed"] is True
+    obs = q.probe_batch(q.legal_actions())  # round 2: branch 1's error is not a string
+    assert [o.cell_id for o in obs] == ["b0a1", "b1a1", "b2a1"]
+    assert [(o.score, o.evaluated) for o in obs] == [(5.0, True), (0.0, False), (7.0, True)]
+    assert obs[0].fail_class == obs[2].fail_class == "ok"
+    assert obs[1].error is not None and "'error': 42" in obs[1].error
+    assert len(q.frozen("iter0001", {})) == 6  # every cell of both batches reaches the tree

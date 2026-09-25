@@ -4,6 +4,7 @@ Every test forks a real child with a shell stand-in for an agent CLI (never a re
 API) and asserts that a timeout, terminate() or an interrupt kills the whole process group.
 """
 
+import concurrent.futures
 import json
 import os
 import signal
@@ -344,8 +345,138 @@ def test_terminate_returns_even_when_an_escapee_holds_the_pipes(tmp_path):
     started = time.time()
     agent.terminate()
     in_flight.join(timeout=4.0)
-    assert not in_flight.is_alive() and time.time() - started < 2.0  # the escapee sleeps 3 s
+    # one slice at most (the escapee sleeps 3 s); a second slice would be a regression
+    assert not in_flight.is_alive() and time.time() - started < 1.5
     assert results == [{"returncode": None, "stdout": "", "stderr": "agent terminated"}]
+
+
+# A CLI that forks a setsid escapee holding its pipes (marker as above), prints, and exits 5.
+EXITS_BEHIND_AN_ESCAPEE = (
+    "import subprocess, sys\n"
+    "subprocess.Popen([sys.executable, '-c', 'import os, pathlib, sys, time; os.setsid(); "
+    "pathlib.Path(sys.argv[1]).touch(); time.sleep(5)', sys.argv[2]])\n"
+    "print('cli done')\n"
+    "sys.exit(5)\n"
+)
+
+
+def test_a_finished_agent_whose_escapee_holds_the_pipes_keeps_its_exit_status(tmp_path):
+    """A descendant outside the group is not killed, by design; once the CLI has exited it must not
+    hold the call until the timeout either: within about two seconds the call returns the CLI's
+    real exit status, with the output the escapee holds dropped, not a timed_out report."""
+    marker = tmp_path / "escapee-forked"
+    agent = CommandAgent(
+        [sys.executable, "-c", EXITS_BEHIND_AN_ESCAPEE, "{prompt}", str(marker)],
+        timeout=10.0,
+        kill_grace=0.2,
+    )
+    started = time.time()
+    result = agent("p", cwd=str(tmp_path), target=str(tmp_path))
+    assert time.time() - started < 3.0  # neither the 10 s timeout nor the escapee's 5 s
+    assert result == {
+        "returncode": 5,
+        "stdout": "",
+        "stderr": "agent exited, but a process outside its group holds its output; output dropped",
+    }
+    assert marker.exists()
+
+
+# A CLI whose group holds only a zombie by the time the CLI exits: X forks Y, Y exits at once, X
+# leaves the group with setsid and never reaps Y in time. On Darwin, signalling such a group fails
+# with EPERM rather than ESRCH.
+ZOMBIE_LEFT_IN_GROUP = (
+    "import os, sys, time\n"
+    "devnull = os.open(os.devnull, os.O_RDWR)\n"
+    "if os.fork() == 0:\n"
+    "    os.dup2(devnull, 1)\n"
+    "    os.dup2(devnull, 2)\n"
+    "    if os.fork() == 0:\n"
+    "        os._exit(0)\n"
+    "    os.setsid()\n"
+    "    time.sleep(3)\n"
+    "    os._exit(0)\n"
+    "print('cli done')\n"
+    "sys.exit(0)\n"
+)
+
+
+def test_a_zombie_left_in_the_group_does_not_fail_a_finished_call(tmp_path):
+    """Sweeping the group after the CLI exited must not turn a successful attempt into a crashed
+    one because the only member left is a zombie nothing can signal."""
+    agent = CommandAgent([sys.executable, "-c", ZOMBIE_LEFT_IN_GROUP, "{prompt}"], timeout=5.0)
+    result = agent("p", cwd=str(tmp_path), target=str(tmp_path))
+    assert result == {"returncode": 0, "stdout": "cli done\n", "stderr": ""}
+
+
+class _CountsTerminations:
+    """An agent stub whose attempts return at once; records terminate() calls."""
+
+    def __init__(self):
+        self.terminated = 0
+
+    def __call__(self, prompt, *, cwd, target):
+        return {"returncode": 0}
+
+    def terminate(self):
+        self.terminated += 1
+
+
+def _two_root_question(tmp_path, agent) -> LiveQuestion:
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    return LiveQuestion(
+        make_task(str(tmp_path)),
+        agent,
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=2,
+        branch_count=2,
+        refine_count=0,
+    )
+
+
+def test_an_interrupt_between_two_submits_still_terminates_the_agents(
+    tmp_path, stub_prompts, monkeypatch
+):
+    """The submit loop runs inside the try: an interrupt landing between two submits cancels the
+    batch and terminates the agent instead of escaping with the first attempt in flight."""
+    agent = _CountsTerminations()
+    q = _two_root_question(tmp_path, agent)
+    real_submit, submits = concurrent.futures.ThreadPoolExecutor.submit, []
+
+    def interrupts_the_second_submit(pool, fn, *args):
+        submits.append(args)
+        if len(submits) == 2:
+            raise _Interrupted("SIGINT between two submits")
+        return real_submit(pool, fn, *args)
+
+    monkeypatch.setattr(
+        concurrent.futures.ThreadPoolExecutor, "submit", interrupts_the_second_submit
+    )
+    with pytest.raises(_Interrupted):
+        q.probe_batch(q.legal_roots())
+    assert agent.terminated == 1 and q.cells == {}
+
+
+def test_an_interrupt_during_the_workers_join_still_terminates_the_agents(
+    tmp_path, stub_prompts, monkeypatch
+):
+    """An interrupt that lands in the executor's final join, after every attempt completed,
+    terminates the agent before propagating instead of leaving it to the interpreter's exit."""
+    agent = _CountsTerminations()
+    q = _two_root_question(tmp_path, agent)
+    real_shutdown = concurrent.futures.ThreadPoolExecutor.shutdown
+
+    def interrupts_the_join(pool, wait=True, *, cancel_futures=False):
+        if wait:
+            raise _Interrupted("SIGINT during the join")
+        return real_shutdown(pool, wait, cancel_futures=cancel_futures)
+
+    monkeypatch.setattr(concurrent.futures.ThreadPoolExecutor, "shutdown", interrupts_the_join)
+    with pytest.raises(_Interrupted):
+        q.probe_batch(q.legal_roots())
+    assert agent.terminated == 1 and q.cells == {}
 
 
 def test_a_finished_agent_whose_child_holds_the_pipes_returns_its_real_result(

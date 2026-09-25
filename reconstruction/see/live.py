@@ -82,6 +82,8 @@ def _signal_group(pgid: int, sig: int) -> None:
         os.killpg(pgid, sig)
     except ProcessLookupError:  # nothing left in the group
         pass
+    except PermissionError:  # Darwin: only zombies left in the group, which nothing can signal
+        pass
 
 
 class CommandAgent:
@@ -127,7 +129,27 @@ class CommandAgent:
                     out, err = p.communicate(timeout=min(1.0, remaining))
                     break
                 except subprocess.TimeoutExpired:
-                    if time.monotonic() >= deadline:
+                    with self._lock:
+                        claimed = p not in self._live
+                    if claimed:
+                        # terminate() killed the group; a descendant outside it may hold the pipes
+                        self._close_pipes(p)
+                        return self._terminated()
+                    if p.poll() is not None:  # the CLI has exited; something still holds its pipes
+                        if not swept:  # a member of its group: kill the rest; the next slice is EOF
+                            _signal_group(p.pid, signal.SIGKILL)
+                            swept = True
+                            continue
+                        # still held after the sweep, so by a process outside the group, which is
+                        # not killed by design: keep the CLI's exit status and drop what it printed
+                        self._close_pipes(p)
+                        return {
+                            "returncode": p.returncode,
+                            "stdout": "",
+                            "stderr": "agent exited, but a process outside its group holds its "
+                            "output; output dropped",
+                        }
+                    if time.monotonic() >= deadline:  # the CLI is alive, so its group id is valid
                         kill_process_group(p, self.kill_grace)
                         self._close_pipes(p)
                         return {
@@ -136,18 +158,6 @@ class CommandAgent:
                             "stderr": f"agent timed out after {self.timeout}s",
                             "timed_out": True,
                         }
-                    if p.poll() is not None and not swept:
-                        # the CLI has exited but a member of its group still holds its pipes:
-                        # kill the rest of the group, and the next slice reads EOF
-                        _signal_group(p.pid, signal.SIGKILL)
-                        swept = True
-                        continue
-                    with self._lock:
-                        claimed = p not in self._live
-                    if claimed:
-                        # terminate() killed the group; a descendant outside it may hold the pipes
-                        self._close_pipes(p)
-                        return self._terminated()
             # members that outlived the CLI hold nothing this call waits on any more; none of them
             # outlives the call (the group id is the reaped leader's pid: its reuse by an unrelated
             # session within these microseconds is not defended against)

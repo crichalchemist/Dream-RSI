@@ -119,7 +119,8 @@ class DreamRSI:
 
     def manifests(self) -> list:
         out = []
-        for path in sorted(glob.glob(os.path.join(self.pool, "iter*", "live_cycle_manifest.json"))):
+        pattern = os.path.join(glob.escape(self.pool), "iter*", "live_cycle_manifest.json")
+        for path in sorted(glob.glob(pattern)):
             with open(path) as f:
                 out.append(json.load(f))
         return out
@@ -156,7 +157,7 @@ class DreamRSI:
         # runs/ is created first and trace_pool/ last; any archive of this iteration means it ran
         # once already, and a restart's offline() would recreate the first one (r{round+1}_tNN_m0),
         # because the round counter is persisted only on success
-        archives = sorted(glob.glob(os.path.join(self.dev_history, f"r*_t{t:02d}_m*")))
+        archives = sorted(glob.glob(os.path.join(glob.escape(self.dev_history), f"r*_t{t:02d}_m*")))
         existing = [p for p in (run_dir, out, *archives) if os.path.exists(p)]
         if existing:
             one = len(existing) == 1

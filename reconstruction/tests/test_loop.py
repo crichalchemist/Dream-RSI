@@ -265,8 +265,8 @@ def test_one_malformed_evaluator_result_fails_one_cell_not_the_batch(tmp_path, s
 
 
 def test_a_fault_while_recording_a_batch_keeps_none_of_it(tmp_path, stub_prompts, monkeypatch):
-    """The cells of a batch reach the tree together or not at all, so what an interrupt freezes
-    never holds half a batch without its episode row."""
+    """The cells of a batch reach the tree together or not at all, so neither a fault while
+    recording nor an interrupt between two cells leaves half a batch in the tree."""
     real, seen = see.live.observation_for, []
 
     def fails_on_the_second(cell, parent, baseline):
@@ -372,7 +372,7 @@ def test_a_sweep_that_scored_other_bytes_than_the_archive_is_refused(tmp_path, m
     method.write_text("# a policy\n")
     invalid = {"valid": False, "errors": ["x"], "pareto": {"reward": -1e999}, "eq1": {"V": -1e999}}
     monkeypatch.setattr(
-        loop, "_sweep", lambda archived, rdir: {"valid": True, "sha256": "0" * 64, **invalid}
+        loop, "_sweep", lambda archived, rdir: {**invalid, "valid": True, "sha256": "0" * 64}
     )
     with pytest.raises(RuntimeError, match=r"did not score the archived bytes"):
         loop._archive(str(method), 1, 0)
@@ -475,6 +475,22 @@ def test_restart_refuses_when_any_archive_of_the_iteration_exists(tmp_path, stub
     assert agent.targets == []
     (history / archive_name(8, 1, 0)).mkdir()
     with pytest.raises(RuntimeError, match=r"r0007_t01_m2 and .*r0008_t01_m0 exist: .*delete them"):
+        loop.online(1)
+    assert agent.targets == []
+
+
+def test_restart_guard_and_manifests_survive_glob_characters_in_the_workdir(tmp_path, stub_prompts):
+    """A workdir such as run[1] must neither make the guard's glob match nothing, which would let
+    a restart overwrite the aborted archive, nor hide the pool's manifests from planning."""
+    work = tmp_path / "run[1]"
+    agent = _RecordingAgent()
+    loop = _interruptible_loop(str(work), agent)
+    (work / "policy_dev" / "history" / archive_name(1, 1, 0)).mkdir(parents=True)
+    pool_entry = work / "trace_pool" / "iter0001"
+    pool_entry.mkdir()
+    (pool_entry / "live_cycle_manifest.json").write_text('{"iteration": 1}\n')
+    assert loop.manifests() == [{"iteration": 1}]
+    with pytest.raises(RuntimeError, match=r"trace_pool/iter0001 and .*r0001_t01_m0 exist"):
         loop.online(1)
     assert agent.targets == []
 

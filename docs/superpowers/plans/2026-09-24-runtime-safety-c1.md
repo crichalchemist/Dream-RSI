@@ -1280,6 +1280,31 @@ changed the code a task prints above, the committed code is the one described he
     error such as `EMFILE`) propagates instead of scoring the version invalid. Kept on purpose:
     it describes the host, not the version, and a −∞ would misattribute it and skew the argmax.
     Recorded in GAPS.md §3.
+11. GAPS.md's "Deploy-time code integrity" row (written in track B) still described a two-path
+    guard; it now names all three paths and says recovery deletes every `r*_tNN_m*` of the aborted
+    iteration.
+12. `install_signal_handlers()` also maps SIGHUP, leaving it alone when it was inherited ignored (a
+    nohup or setsid launch): with the agents and the sweep in their own sessions they no longer
+    receive the terminal's hangup, so an unmapped SIGHUP that killed the parent orphaned them. The
+    docs and the spec say "SIGKILL, or any signal the entry points do not map" instead of "only
+    SIGKILL".
+13. Spec §7's "an interrupt during the baseline evaluation or planning writes an empty partial
+    trace" was never implementable as written (the partial freeze needs the live question, which
+    needs the baseline): the baseline is now evaluated before `runs/iterNNNN/` is created, so such
+    an interrupt leaves nothing under `runs/`; the spec bullet is amended.
+14. The terminate path had no equivalent of Ruling 5's guard: a claimed call waited for EOF on
+    pipes a descendant outside the group still held, up to the agent timeout. `__call__` now waits
+    in one-second slices and a claimed call closes its pipes and returns terminated at the next
+    slice; the unclaimed leader-exits-while-a-member-holds-the-pipes case still waits for EOF or
+    the timeout (deferred).
+15. `kill_process_group` sends SIGKILL unconditionally after the grace wait, a superset of spec
+    §5's "if still alive". Tasks 1, 2, 3 and 8 landed as a task commit plus a review-fix commit
+    each, not squashed; the owner decides the merge shape. Rulings 12–14 and 16 added four tests:
+    the count is 68, pinned only in `.github/workflows/ci.yml`.
+16. Agent and sweep output is decoded with `errors="replace"`: a process killed or exiting
+    between the bytes of one character raised `UnicodeDecodeError` out of the call (pre-existing
+    under `subprocess.run`, more likely now that kills are routine); the output is diagnostic text
+    only. With its test the count is 68.
 
 Deferred minors from the task reviews are listed in the final review's triage (see the pull
 request), not here.

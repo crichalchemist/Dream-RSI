@@ -49,7 +49,8 @@ Goals:
 Non-goals: resuming an interrupted iteration (track B's decision stands: refuse loudly, delete, do
 not merge); everything listed under C2 and C3 above; killing in-process evaluators (C2's
 evaluator-subprocess design); Windows (the CI matrix is ubuntu and macos; `os.killpg` and
-`start_new_session` are POSIX); surviving SIGKILL of the parent.
+`start_new_session` are POSIX); surviving SIGKILL of the parent, or any signal the entry points do
+not map.
 
 Constraints carried from tracks A and B: the gate stays strict (`ruff format --check .`,
 `ruff check .`, `pyright` basic with 0 errors, `python tools/extract_listings.py --check`,
@@ -76,13 +77,13 @@ constructor signature changes, no change to the policy contract.
 | `see/live.py`, `LiveQuestion` | `_interrupted: threading.Event`; `_execute` submits futures and, on any `BaseException` in the main thread, sets the event, cancels queued futures, calls `agent.terminate()` when the agent has one, and re-raises; `_run_attempt` raises before creating anything when the event is set. `eval/score.json` gains `agent_timed_out`. |
 | `see/loop.py`, `DreamRSI.online` | a second `except BaseException` branch freezes the partial tree under `runs/iterNNNN/partial/` and re-raises; the manifest-building code is shared by both paths. The guard also checks the first archive name and names every existing path. |
 | `see/loop.py`, `DreamRSI._sweep` | `Popen(start_new_session=True)` + `communicate(timeout=sweep_timeout)`; timeout kills the group and scores the version invalid as today; `finally` kills a still-live group. |
-| `see/loop.py`, module level | `archive_name(round, t, m)` used by `_archive` and the guard; `install_signal_handlers()` mapping SIGTERM to `KeyboardInterrupt`. `LoopConfig` gains `kill_grace: float = 5.0` (used by `_sweep`). |
+| `see/loop.py`, module level | `archive_name(round, t, m)` used by `_archive` and the guard; `install_signal_handlers()` mapping SIGTERM and SIGHUP to `KeyboardInterrupt` (a SIGHUP inherited ignored stays ignored). `LoopConfig` gains `kill_grace: float = 5.0` (used by `_sweep`). |
 | `see/__main__.py:cmd_demo`, `scripts/run_dream_rsi.py:main` | call `install_signal_handlers()` first. |
 
 ## 4. The interrupt path
 
-1. SIGINT, SIGTERM (mapped by §6) or a `BaseException` escaping the policy surfaces in the main
-   thread, which is inside `LiveQuestion._execute` waiting on the batch's futures.
+1. SIGINT, SIGTERM and SIGHUP (mapped by §6; a SIGHUP inherited ignored stays ignored) or a
+   `BaseException` escaping the policy surfaces in the main thread, which is inside `LiveQuestion._execute` waiting on the batch's futures.
 2. `_execute` sets `_interrupted`, calls `pool.shutdown(wait=False, cancel_futures=True)` so
    queued attempts never start, and calls `terminate()` on the agent if it has one. A worker that
    had not yet launched its agent sees the event at the top of `_run_attempt` and raises without
@@ -146,25 +147,29 @@ subprocess and propagates; `offline()` persists nothing, and §6's guard handles
   with every existing candidate: singular wording for one path (`{path} exists: iteration {t} was
   interrupted or already ran; delete it, do not merge into it`), plural for several (`{a} and {b}
   exist: …; delete them, do not merge into them`). Track B's tests match the singular form.
-- `install_signal_handlers()` installs a SIGTERM handler that raises
-  `KeyboardInterrupt(f"signal {signum}")`. Called first thing by `cmd_demo` and by
+- `install_signal_handlers()` installs a SIGTERM and SIGHUP handler that raises
+  `KeyboardInterrupt(f"signal {signum}")` (a SIGHUP inherited ignored stays ignored). Called first thing by `cmd_demo` and by
   `scripts/run_dream_rsi.py:main`; never on import, never by tests (they raise the stand-in
   exception directly).
 
 ## 7. Edge cases and limitations
 
-- Interrupt during the baseline evaluation or planning: nothing collected; an empty partial trace
-  with `error` set is written.
+- Interrupt during the baseline evaluation or planning: nothing collected; nothing is written
+  under `runs/`, because the baseline is evaluated before `runs/iterNNNN/` is created.
 - Interrupt while an in-process evaluator runs: it cannot be killed; the interrupt returns after
   in-flight evaluations finish (about 20 s for Lasso). Limitation, recorded in GAPS; C2 owns it.
 - An agent that ignores SIGTERM dies at SIGKILL after `kill_grace`. A child that calls `setsid`
   itself leaves the group and escapes; documented, not solved.
+- A call claimed by `terminate()` stops waiting for its pipes within a second even when a
+  descendant outside the group still holds them; the unclaimed case where the leader exits on its
+  own while a member holds the pipes waits for EOF or the timeout.
 - A second Ctrl-C during the freeze may leave `partial/` half-written; the guard still refuses.
 - `Question.probe_batch` advances its round counters before `_execute`, so a partial manifest's
   `decision_rounds` counts the interrupted round. Acceptable; the manifest says `partial`.
 - A terminated `CommandAgent` never spawns again; a new run constructs a new agent.
-- SIGKILL of the parent runs none of this; the CLAUDE.md recovery bullet keeps one clause about
-  checking for a surviving `see sweep` in that case only.
+- SIGKILL of the parent, or any signal the entry points do not map, runs none of this; the
+  CLAUDE.md recovery bullet keeps one clause about checking for a surviving `see sweep` in those
+  cases only.
 
 ## 8. Tests (55 → 62 collected; suite about 8 s)
 
@@ -196,7 +201,8 @@ process, so the red run is the helper being absent).
   first archive name, and that the round counter is persisted only on success).
 - `.claude/CLAUDE.md`: the interrupted-iteration bullet becomes: refuse on `runs/`, `trace_pool/`
   or the first archive dir; the partial trace is under `runs/iterNNNN/partial/`; delete the three
-  before restarting; after a SIGKILL of the parent (only), check for a surviving `see sweep`.
+  before restarting; after a SIGKILL of the parent, or any signal the entry points do not map,
+  check for a surviving `see sweep`.
 - `reconstruction/README.md`: status table rows for interruption handling and agent timeouts.
 - `.github/workflows/ci.yml`: `--expect 62`. The count is quoted nowhere else.
 

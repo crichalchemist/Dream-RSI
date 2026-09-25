@@ -95,10 +95,12 @@ prompts from `generated/`, which is why extraction is a prerequisite.
   tasks interfere with each other. Do not parallelize evaluation for Lasso or kernel tasks.
 - An interrupted iteration cannot be resumed: `online()` raises if `runs/iterNNNN/`,
   `trace_pool/iterNNNN/` or the iteration's first archive `policy_dev/history/rNNNN_tNN_m0/`
-  already exists, naming every one that does. Ctrl-C and SIGTERM (the entry points call
-  `install_signal_handlers()`) kill the running agents' process groups and freeze what was
-  collected under `runs/iterNNNN/partial/`, never into the pool. To restart, delete the named
-  directories and the aborted iteration's other `policy_dev/history/r*_tNN_m*` entries — the
-  round counter is persisted only on success — and do not merge into them. Only after a SIGKILL
-  of the parent (which runs no cleanup) check for a surviving `see sweep` process.
+  already exists, naming every one that does. Ctrl-C, SIGTERM and SIGHUP (the entry points call
+  `install_signal_handlers()`; a SIGHUP inherited ignored, as under nohup, stays ignored) kill the
+  running agents' process groups and freeze what was collected under `runs/iterNNNN/partial/`,
+  never into the pool; an interrupt before the first attempt (planning, baseline evaluation)
+  leaves nothing under `runs/`. To restart, delete the named directories and the aborted
+  iteration's other `policy_dev/history/r*_tNN_m*` entries — the round counter is persisted only
+  on success — and do not merge into them. After a SIGKILL of the parent, or any signal the entry
+  points do not map, which run no cleanup, check for a surviving `see sweep` process first.
 - `*.local.md` files are private maintainer notes and are gitignored.

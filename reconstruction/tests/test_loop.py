@@ -189,6 +189,8 @@ def test_one_malformed_evaluator_result_fails_one_cell_not_the_batch(tmp_path, s
     malformed = {  # each of these used to abort the whole batch it was evaluated in
         "attempt_b001_a000": {"combined_score": "n/a", "validity": 1.0},
         "attempt_b001_a001": {"combined_score": 3.0, "error": 42},
+        "attempt_b000_a002": {"combined_score": 3.0, "error": []},  # falsy, but not a string
+        "attempt_b002_a002": {"error": None},  # combined_score missing entirely
     }
 
     def malformed_on_branch_1(path: str) -> dict:
@@ -203,6 +205,9 @@ def test_one_malformed_evaluator_result_fails_one_cell_not_the_batch(tmp_path, s
         "attempt_b000_a001": 5.0,
         "attempt_b001_a001": 6.0,
         "attempt_b002_a001": 7.0,
+        "attempt_b000_a002": 8.0,
+        "attempt_b001_a002": 9.0,
+        "attempt_b002_a002": 10.0,
     }
 
     def writes_a_distinct_program(prompt, *, cwd, target):
@@ -220,7 +225,7 @@ def test_one_malformed_evaluator_result_fails_one_cell_not_the_batch(tmp_path, s
         1.0,
         max_parallelism=3,
         branch_count=3,
-        refine_count=1,
+        refine_count=2,
     )
     obs = q.probe_batch(q.legal_roots())  # round 1: branch 1's score is not a number
     assert [o.cell_id for o in obs] == ["b0a0", "b1a0", "b2a0"]
@@ -235,7 +240,20 @@ def test_one_malformed_evaluator_result_fails_one_cell_not_the_batch(tmp_path, s
     assert [(o.score, o.evaluated) for o in obs] == [(5.0, True), (0.0, False), (7.0, True)]
     assert obs[0].fail_class == obs[2].fail_class == "ok"
     assert obs[1].error is not None and "'error': 42" in obs[1].error
-    assert len(q.frozen("iter0001", {})) == 6  # every cell of both batches reaches the tree
+    obs = q.probe_batch(  # round 3: branch 0's error is falsy, branch 2's combined_score is missing
+        q.legal_actions()
+    )
+    assert [o.cell_id for o in obs] == ["b0a2", "b1a2", "b2a2"]
+    assert [(o.score, o.evaluated) for o in obs] == [(0.0, False), (9.0, True), (0.0, False)]
+    assert obs[1].fail_class == "ok"  # the well-formed sibling keeps its result
+    for i in (0, 2):
+        assert obs[i].error is not None
+        assert obs[i].error.startswith("ValueError: malformed evaluator result")
+    with open(tree / "attempt_b000_a002" / "eval" / "score.json") as f:
+        assert json.load(f)["evaluator_crashed"] is True
+    with open(tree / "attempt_b002_a002" / "eval" / "score.json") as f:
+        assert json.load(f)["evaluator_crashed"] is True
+    assert len(q.frozen("iter0001", {})) == 9  # every cell of all three rounds reaches the tree
 
 
 def _sha256(path: str) -> str:

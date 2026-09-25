@@ -205,7 +205,7 @@ replay the same policy with the same configuration on the frozen `Trace` through
 revealed scores, failure classes, parent deltas), then `budget_spent`, `decision_rounds`,
 `best_so_far`, `eq1_value` and `beta_sweep`. The claim is on-policy; off-policy truncation stays
 covered by the existing tests in `tests/test_objective.py`. The seed list is sized so the whole
-suite stays under about three seconds, and a failure names the seed, the policy and the first
+suite stays under about five seconds, and a failure names the seed, the policy and the first
 differing round. The existing single-seed `test_on_policy_replay_reproduces_the_live_episode`
 remains.
 
@@ -229,7 +229,7 @@ remains.
    restart with the same workdir → the refusal names `runs/iter0001`; delete it → the restart
    proceeds.
 4. The property test's runtime is measured and recorded in the plan; the suite stays under about
-   three seconds.
+   five seconds.
 
 ## 8. Sequencing
 

@@ -109,7 +109,7 @@ class CommandAgent:
                 out, err = p.communicate(timeout=self.timeout)
             except subprocess.TimeoutExpired:
                 kill_process_group(p, self.kill_grace)
-                p.communicate()  # the group is dead; drain what it left in the pipes
+                self._close_pipes(p)
                 return {
                     "returncode": None,
                     "stdout": "",
@@ -118,8 +118,18 @@ class CommandAgent:
                 }
             return {"returncode": p.returncode, "stdout": out[-4000:], "stderr": err[-4000:]}
         finally:
+            if p.poll() is None:  # an exception escaped communicate(): take the group with us
+                kill_process_group(p, self.kill_grace)
+                self._close_pipes(p)
             with self._lock:
                 self._live.discard(p)
+
+    @staticmethod
+    def _close_pipes(p: subprocess.Popen) -> None:
+        """Drop what a killed group left in its pipes; reading them could block on a survivor."""
+        for pipe in (p.stdout, p.stderr):
+            if pipe is not None:
+                pipe.close()
 
 
 def oriented_score(task: TaskSpec, result: dict) -> float:

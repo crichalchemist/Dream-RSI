@@ -6,12 +6,12 @@ import json
 import os
 import sys
 
-from see.objective import DEFAULT_BETAS, DEFAULT_LAMBDA, beta_sweep
+from see.objective import DEFAULT_BETAS, DEFAULT_LAMBDA, beta_sweep, next_live_plan
 
 
 def cmd_sweep(a):
     from see.loader import load_policy, overrides_plan_grid
-    from see.pool import context_factory, load_pool
+    from see.pool import context_factory, load_pool, next_context
 
     with open(a.method, "rb") as f:
         digest = hashlib.sha256(f.read()).hexdigest()  # before loading runs the code
@@ -28,6 +28,19 @@ def cmd_sweep(a):
         beta1=a.beta1,
         beta2=a.beta2,
         max_rounds=a.max_rounds,
+    )
+
+    # After the sweep is scored, so an exception raised while planning cannot change a score;
+    # from the file and the pool loaded afresh, as online() loads them in its own process, so
+    # nothing the sweep's episodes left in the class or the manifests reaches it (GAPS §3,
+    # "Next live plan").
+    def fresh_policy(config):
+        return load_policy(a.method)(config)
+
+    fresh = load_pool(a.pool)
+    width = a.max_parallelism if a.max_parallelism is not None else fresh[-1][0].max_parallelism
+    report["next_live_plan"] = next_live_plan(
+        fresh_policy, next_context(fresh, a.fallback, a.hard_max, width), [t.grid for t, _ in fresh]
     )
     report["plan_grid_override"] = overrides_plan_grid(cls)
     report["method"] = os.path.abspath(a.method)
@@ -91,6 +104,7 @@ def main(argv=None):
     s.add_argument("--max-rounds", type=int, default=None)
     s.add_argument("--fallback", type=int, nargs=2, default=(10, 10))
     s.add_argument("--hard-max", type=int, nargs=2, default=(32, 19))
+    s.add_argument("--max-parallelism", type=int, default=None)  # default: the newest tree's
     s.set_defaults(func=cmd_sweep)
     d = sub.add_parser("demo", help="run the whole loop on the toy task with scripted agents")
     d.add_argument("--workdir", required=True)

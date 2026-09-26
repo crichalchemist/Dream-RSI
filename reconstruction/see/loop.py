@@ -367,6 +367,8 @@ class DreamRSI:
             "--hard-max",
             str(hb),
             str(hr),
+            "--max-parallelism",
+            str(self.c.max_parallelism),
             "--betas",
             *map(str, self.c.betas),
         ]

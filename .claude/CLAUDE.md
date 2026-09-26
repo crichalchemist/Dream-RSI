@@ -89,8 +89,9 @@ real agent in `runs/iterNNNN/tree/attempt_*/` workspaces. Through the `Question`
 tell them apart, which is what makes replay evaluation valid. Its `GridPlanningContext` can: the
 `trace_*` fields are set only in replay, so each replay episode also records the plan made with
 them cleared. Replay's history also stops before the replayed trace, so that plan is not the one
-`online()` would run next (GAPS.md §3, "Live-plan signal in replay"). Replay only reveals what
-the recorded tree contains — a policy that goes wider or deeper than the behaviour policy is
+`online()` would run next; `see sweep` records that one per version as `next_live_plan`, for the
+report only (GAPS.md §3, "Live-plan signal in replay" and "Next live plan"). Replay only reveals
+what the recorded tree contains — a policy that goes wider or deeper than the behaviour policy is
 truncated (GAPS.md §6).
 
 **Policy contract is frozen.** `see/policy/api.py` (`LLMDesignedMethod`, `GridPlan`,

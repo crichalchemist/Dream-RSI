@@ -381,3 +381,38 @@ these places.
      (`test_a_workdir_from_before_d2b_reads_not_measured`).
 7. **The CI pin moves once**, in Task 7 (123 → 142). Each earlier task's gate checks its own
    measured count.
+
+## 14. Amendments while executing (2026-09-26)
+
+The plan ran task by task, each with a fresh implementer and a fresh reviewer. Every commit was
+compared byte for byte with the spike's commit or with the reviewed fix. The reviews changed the
+design in these places.
+
+1. **The D2a narrative's stderr sentence.** GAPS §5's "the loop keeps each agent's exit code but
+   not its stderr" became false with Task 1, so Task 1 rewrites it in the past tense.
+2. **The repeat test pins the median, not a position.** At k = 3 Task 2's test had a median that
+   was also the last run submitted, so it passed for "return the last run" and for a hard-coded
+   `sorted(...)[1]`. It now uses k = 5, with a median that is not the first, last or middle run
+   submitted, nor `sorted(...)[1]`. Each of those mutants fails it.
+3. **Section 6.2's home and temp rules cover the directory itself.** The old rule matched the
+   directory only with a trailing separator, so it missed `HOME=/Users/name` and a working directory
+   quoted with nothing after it. The rule now matches the directory whenever it is followed by
+   anything but a name character. That covers every path under it (rewritten as before) and the
+   directory itself, and never a longer name that merely starts with it. A home of `/` is skipped.
+4. **JSON that does not parse is withheld.** A SIGKILL can leave `score.json` cut short, and parsing
+   such a file aborted the whole copy. Unparsed, a file cannot be checked for a source line between
+   escaped newlines, so it is withheld, like a file quoting `CPP_CODE`, and the copy goes on.
+   `report.md` and `.claude/CLAUDE.md` say so.
+5. **Section 6.3's report, four corrections.**
+   - A test now pins the byte-check arm: an untouched case is listed when its bytes match even if
+     the loop never recorded its flag, as in D2a.
+   - An attempt the loop flagged untouched whose program is gone (a stripped copy) counts as
+     unchecked. Its fail class is `no_program`, but its program was there.
+   - A repeat set cut short by a failed run is left out of `repeat_spread`. The gap to a failed run
+     is a failure, not evaluation noise.
+   - Each version counts the episodes whose live plan raised (`live_plan_errors`), and section 2
+     shows the count beside "beyond support". `online()` does not catch `plan_grid`, so such a
+     version would stop the next iteration once deployed. Without the count, its episodes would
+     read as within support.
+6. **Test count.** Items 3 to 5 add six tests, for 25 new tests in all (123 → 148). The CI pin
+   moves to 148.

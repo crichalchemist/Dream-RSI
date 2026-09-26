@@ -225,6 +225,9 @@ def analyse_version(rdir: str, grids: dict, fallback, selected: set) -> dict:
     recorded = {tuple(grids[e["trace_id"]]) for e in clipped if e["trace_id"] in grids}
     # every episode's error, not beta_sweep.json's first three; the report's own when none ran
     errors = [e["error"] for e in episodes if e["error"]] or list(report.get("errors", []))
+    # the grid online() would run next with this version deployed; absent before that measure
+    nxt = report.get("next_live_plan") or {}
+    raised_next = "error" in nxt
     return {
         "version": name,
         "iteration": int(t[1:]),
@@ -239,6 +242,11 @@ def analyse_version(rdir: str, grids: dict, fallback, selected: set) -> dict:
         "beyond_support": len(beyond) if measured else None,
         "live_asked": [list(g) for g in sorted(live_asked)],
         "live_plan_errors": raised if measured else None,
+        "next_live_plan": [nxt["branch_count"], nxt["refine_count"]]
+        if nxt and not raised_next
+        else None,
+        "next_beyond_support": nxt.get("beyond_support"),
+        "next_live_plan_error": _last_line(nxt["error"]) if raised_next else None,
         "episode_errors": sum(1 for e in episodes if e["error"]),
         "cause": cause(errors),
         "first_error": _last_line(errors[0]) if errors else None,
@@ -381,6 +389,7 @@ def build_report(workdir: str, host_json: str | None = None, archive: str | None
     versions = [analyse_version(r, grids, fallback, selected) for r in sorted(glob.glob(history))]
     flagged = [v for v in versions if v["clipped"]]
     beyond = [v for v in versions if v["beyond_support"]]
+    next_beyond = [v for v in versions if v["next_beyond_support"]]
     flags = [r["loop_untouched"] for r in rows]
     return {
         "workdir": _home_relative(workdir),
@@ -408,6 +417,12 @@ def build_report(workdir: str, host_json: str | None = None, archive: str | None
             "beyond_support": [v["version"] for v in beyond],
             "beyond_support_deployed": [v["version"] for v in beyond if v["deployed"]],
             "measured": any(v["beyond_support"] is not None for v in versions),
+            "next_beyond_support": [v["version"] for v in next_beyond],
+            "next_beyond_support_deployed": [v["version"] for v in next_beyond if v["deployed"]],
+            "next_live_plan_errors": [v["version"] for v in versions if v["next_live_plan_error"]],
+            "next_measured": any(
+                v["next_live_plan"] is not None or v["next_live_plan_error"] for v in versions
+            ),
         },
         "untouched": {
             "attempts": sum(r["attempts"] for r in rows),
@@ -481,11 +496,23 @@ def markdown(r: dict) -> str:
             f"trace fields cleared; {len(oos['beyond_support_deployed'])} of them deployed."
             if oos["measured"]
             else "Plans beyond a replayed tree with the trace fields cleared: not measured."
+        )
+        + " "
+        + (
+            f"{len(oos['next_beyond_support'])} version(s) would plan a next live cycle that no "
+            f"recorded tree covers; {len(oos['next_beyond_support_deployed'])} of them deployed."
+            + (
+                f" {len(oos['next_live_plan_errors'])} version(s) raised planning it."
+                if oos["next_live_plan_errors"]
+                else ""
+            )
+            if oos["next_measured"]
+            else "Next live plans: not measured."
         ),
         "",
         "| Version | Episodes | Clipped | Asked | Recorded | Beyond support, fields cleared "
-        "| Asked, fields cleared | Deployed |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Asked, fields cleared | Next live plan | Deployed |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for v in r["versions"]:
         asked = ", ".join(_grid(a) for a in v["asked"]) or "-"
@@ -497,9 +524,16 @@ def markdown(r: dict) -> str:
         # raised when asked without the trace fields, given that replay's history
         if v["live_plan_errors"]:
             beyond += f" ({v['live_plan_errors']} raised)"
+        if v["next_live_plan_error"]:
+            nxt = f"raised: {_cell(v['next_live_plan_error'])}"
+        elif v["next_live_plan"] is None:
+            nxt = "not measured"
+        else:
+            nxt = _grid(v["next_live_plan"])
+            nxt += ", beyond support" if v["next_beyond_support"] else ""
         out.append(
             f"| {v['version']} | {v['episodes']} | {v['clipped']} | {asked} | {recorded} | "
-            f"{beyond} | {live} | {v['deployed']} |"
+            f"{beyond} | {live} | {nxt} | {v['deployed']} |"
         )
     u = r["untouched"]
     checked = u["attempts"] - u["unchecked"]

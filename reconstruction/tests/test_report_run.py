@@ -214,6 +214,58 @@ def test_versions_that_plan_beyond_a_tree_without_its_trace_fields_are_counted_p
     assert "| r0001_t01_m0 | 12 | 0 | - | - | 0 | - |" in md  # measured, and nothing asked beyond
 
 
+def test_versions_whose_next_live_plan_no_recorded_tree_covers_are_counted(toy_run):
+    """WIDE plans 3 x 1 for the next live cycle too, and no recorded 2 x 1 tree covers it; m0
+    plans the fallback and EMPTY leaves the grid to it (GAPS §3, "Next live plan")."""
+    report, _ = toy_run
+    rows = [
+        (v["version"], v["next_live_plan"], v["next_beyond_support"], v["next_live_plan_error"])
+        for v in report["versions"]
+    ]
+    assert rows == [
+        ("r0001_t01_m0", [2, 1], False, None),
+        ("r0002_t01_m1", [3, 1], True, None),
+        ("r0003_t01_m2", [2, 1], False, None),
+        ("r0004_t02_m0", [2, 1], False, None),
+        ("r0005_t02_m1", [3, 1], True, None),
+        ("r0006_t02_m2", [2, 1], False, None),
+    ]
+    oos = report["out_of_support"]
+    assert (oos["next_beyond_support"], oos["next_beyond_support_deployed"]) == (
+        ["r0002_t01_m1", "r0005_t02_m1"],
+        [],
+    )
+    assert (oos["next_live_plan_errors"], oos["next_measured"]) == ([], True)
+    md = report_run.markdown(report)
+    assert "2 version(s) would plan a next live cycle that no recorded tree covers; 0 of" in md
+    assert "| r0001_t01_m0 | 12 | 0 | - | - | 0 | - | 2 x 1 | True |" in md
+    assert "| 12 | 3 x 1 | 3 x 1, beyond support | False |" in md
+
+
+def test_a_next_live_plan_that_raised_is_reported_with_its_error(tmp_path):
+    """online() would stop on a deployed version whose plan_grid raises, so the report names the
+    error where the grid would be, never "not measured". D2a's evidence, with m2's sweep given
+    such an error, stands in for a run that recorded one."""
+    workdir = tmp_path / "w"
+    shutil.copytree(os.path.join(RECON, "evidence", "d2a-lasso", "workdir"), workdir)
+    path = workdir / "policy_dev" / "history" / "r0003_t01_m2" / "proposal_results"
+    sweep = json.loads((path / "beta_sweep.json").read_text())
+    error = 'Traceback (most recent call last):\n  File "method.py"\nRuntimeError: no plan\n'
+    sweep["next_live_plan"] = {"error": error}
+    (path / "beta_sweep.json").write_text(json.dumps(sweep))
+    report = report_run.build_report(str(workdir))
+    m2 = report["versions"][-1]
+    assert (m2["next_live_plan"], m2["next_beyond_support"], m2["next_live_plan_error"]) == (
+        None,
+        None,
+        "RuntimeError: no plan",
+    )
+    assert report["out_of_support"]["next_live_plan_errors"] == ["r0003_t01_m2"]
+    md = report_run.markdown(report)
+    assert "no recorded tree covers; 0 of them deployed. 1 version(s) raised planning it." in md
+    assert "| raised: RuntimeError: no plan | True |" in md
+
+
 def test_versions_that_end_on_an_empty_batch_are_named_with_their_cause(toy_run):
     report, _ = toy_run
     empty = [
@@ -340,16 +392,19 @@ def test_the_loops_untouched_flag_and_the_byte_check_are_both_shown_and_disagree
 
 
 def test_a_workdir_from_before_d2b_reads_not_measured():
-    """D2a's committed evidence predates the live-plan signal, the loop's untouched flag and the
-    repeat setting: the report says so, rather than reading 0, False, "n/a" or "-"."""
+    """D2a's committed evidence predates the live-plan signal, the next live plan, the loop's
+    untouched flag and the repeat setting: the report says so, rather than reading 0, False,
+    "n/a" or "-"."""
     report = report_run.build_report(os.path.join(RECON, "evidence", "d2a-lasso", "workdir"))
     assert [v["beyond_support"] for v in report["versions"]] == [None, None, None]
+    assert [v["next_live_plan"] for v in report["versions"]] == [None, None, None]
     assert (report["eval_repeats"], report["untouched"]["loop_flagged"]) == (None, None)
     md = report_run.markdown(report)
     assert "Plans beyond a replayed tree with the trace fields cleared: not measured." in md
+    assert "Next live plans: not measured." in md
     assert "The loop's own untouched flag: not measured." in md
     assert "Evaluation repeats in force: not measured." in md
-    assert md.count("| 12 | 0 | - | - | not measured | not measured |") == 3  # the grid asked
+    assert md.count("| 12 | 0 | - | - | not measured | not measured | not measured |") == 3
     assert "| 0.0134266 | 0.0167488 | not measured |" in md  # the repeat spread
 
 

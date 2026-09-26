@@ -40,8 +40,8 @@ def grandchild_pids(pid_dir) -> list:
 
 def test_agent_timeout_kills_the_whole_process_group(tmp_path, stub_prompts, process_gone):
     """A timed-out agent and everything it forked are dead when the call returns; through
-    LiveQuestion the attempt is scored as the program the agent left but recorded as the
-    `timeout` failure it is, never as a valid non-improving attempt."""
+    LiveQuestion the attempt, whose program the stand-in never touched, is `no_program` and is
+    never evaluated, rather than scored as its parent's copy."""
     pid_dir = tmp_path / "pids"
     pid_dir.mkdir()
     agent = CommandAgent(stand_in(pid_dir), timeout=0.3, kill_grace=0.2)
@@ -69,17 +69,17 @@ def test_agent_timeout_kills_the_whole_process_group(tmp_path, stub_prompts, pro
         refine_count=0,
     )
     [obs] = q.probe_batch(q.legal_roots())
-    # the stand-in never touched the program, so the parent's copy (x=1.0) is what gets scored,
-    # but the attempt is a timeout failure: not a success, and it never raises the ceiling
-    assert (obs.cell_id, obs.score, obs.evaluated, obs.fail_class) == ("b0a0", 1.0, True, "timeout")
-    assert obs.error == "agent timed out after 0.3s"
+    # the stand-in never touched the program: there is nothing new to score, so it is not evaluated
+    untouched = "agent left its program unchanged (agent timed out after 0.3s)"
+    assert (obs.cell_id, obs.score, obs.evaluated) == ("b0a0", 0.0, False)
+    assert (obs.fail_class, obs.error) == ("no_program", untouched)
     assert obs.delta_vs_parent is None and obs.delta_vs_baseline is None  # not a success
     node = tree / "attempt_b000_a000"
     with open(node / "eval" / "score.json") as f:
         score = json.load(f)
     assert score["agent_timed_out"] is True and score["agent_returncode"] is None
-    assert score["fail_class"] == "timeout" and score["combined_score"] == 1.0
-    assert (node / "error.txt").read_text() == "agent timed out after 0.3s"
+    assert score["fail_class"] == "no_program" and score["untouched"] is True
+    assert (node / "error.txt").read_text() == untouched
     pids = grandchild_pids(pid_dir)
     assert len(pids) == 2 and all(process_gone(p) for p in pids)
 
@@ -109,6 +109,33 @@ def test_a_timed_out_agent_that_left_a_broken_program_keeps_the_evaluators_verdi
     assert obs.error is not None and obs.error.startswith("ValueError: unreadable solution")
     with open(tree / "attempt_b000_a000" / "eval" / "score.json") as f:
         assert json.load(f)["agent_timed_out"] is True
+
+
+def test_a_timed_out_agent_that_edited_its_program_is_still_scored_as_a_timeout(
+    tmp_path, stub_prompts
+):
+    """What a timed-out agent changed is scored, but the attempt is the `timeout` failure it is:
+    never a success, so it never raises the trace ceiling. Only an agent that changed nothing is
+    `no_program`."""
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    target = tree / "attempt_b000_a000" / PROGRAM
+    script = """printf '{"x": 2.0}' > "$0"; sleep 30"""
+    writes_then_hangs = ["sh", "-c", script, str(target), "{prompt}"]
+    agent = CommandAgent(writes_then_hangs, timeout=0.3, kill_grace=0.2)
+    q = LiveQuestion(
+        make_task(str(tmp_path)),
+        agent,
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=1,
+        branch_count=1,
+        refine_count=0,
+    )
+    [obs] = q.probe_batch(q.legal_roots())
+    assert (obs.score, obs.evaluated, obs.fail_class) == (2.0, True, "timeout")
+    assert obs.delta_vs_baseline is None  # not a success, although 2.0 beats the root's 1.0
 
 
 class _Interrupted(BaseException):

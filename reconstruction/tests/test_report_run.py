@@ -50,8 +50,8 @@ class StopsWithAnEmptyBatch(LLMDesignedMethod):
         question.probe_batch([])
 """
 SCRIPT = {
-    ("iter0001", "attempt_b000_a000"): "untouched",  # identical to the baseline
-    ("iter0001", "attempt_b001_a001"): "timeout",  # identical to its parent, agent timed out
+    ("iter0001", "attempt_b000_a000"): "untouched",  # identical to the baseline: no_program
+    ("iter0001", "attempt_b001_a001"): "timeout",  # identical to its parent, timed out: no_program
     ("iter0002", "attempt_b001_a000"): "delete",  # no program; its child resumes the baseline
     ("iter0002", "attempt_b000_a001"): "paste",  # its proposal quotes a program: withheld
 }
@@ -171,12 +171,12 @@ def test_an_untouched_attempt_is_reported_with_its_source_and_both_scores(toy_ru
         "attempts": 8,
         "unchecked": 0,
         "cases": [
-            {"iteration": 1, "cell": "b0a0", "source": "baseline", "fail_class": "ok"}
+            {"iteration": 1, "cell": "b0a0", "source": "baseline", "fail_class": "no_program"}
             | {"agent_timed_out": False, "agent_returncode": 0}
-            | {"evaluated": True, "score": 1.0, "source_score": 1.0},
-            {"iteration": 1, "cell": "b1a1", "source": "parent", "fail_class": "timeout"}
+            | {"evaluated": False, "score": 0.0, "source_score": 1.0},
+            {"iteration": 1, "cell": "b1a1", "source": "parent", "fail_class": "no_program"}
             | {"agent_timed_out": True, "agent_returncode": None}
-            | {"evaluated": True, "score": 1.1, "source_score": 1.1},
+            | {"evaluated": False, "score": 0.0, "source_score": 1.1},
         ],
     }
 
@@ -248,8 +248,8 @@ def test_the_health_table_counts_each_iterations_outcomes(toy_run):
     keys = ("attempts", "successes", "fail_classes", "agent_timeouts", "no_program")
     keys += ("evaluator_crashed", "baseline_score", "best_score", "error")
     assert [{k: i[k] for k in keys} for i in report["iterations"]] == [
-        {"attempts": 4, "successes": 3, "fail_classes": {"ok": 3, "timeout": 1}}
-        | {"agent_timeouts": 1, "no_program": 0, "evaluator_crashed": 0}
+        {"attempts": 4, "successes": 2, "fail_classes": {"no_program": 2, "ok": 2}}
+        | {"agent_timeouts": 1, "no_program": 2, "evaluator_crashed": 0}
         | {"baseline_score": 1.0, "best_score": 1.1, "error": None},
         {"attempts": 4, "successes": 3, "fail_classes": {"no_program": 1, "ok": 3}}
         | {"agent_timeouts": 0, "no_program": 1, "evaluator_crashed": 0}
@@ -328,15 +328,16 @@ def test_copy_evidence_does_not_follow_a_symlink_out_of_the_workdir(tmp_path):
 
 
 def test_the_evidence_subset_carries_no_program_and_withholds_a_quoted_one(toy_run):
-    """43 files: state.json and launches.jsonl; three per frozen iteration (6); eight score.json;
-    two error.txt (the timeout, the deleted program); seven of eight proposals; method.py and two
-    sweep files for each of six versions (18). SimpleTES programs are AGPL and stay out."""
+    """44 files: state.json and launches.jsonl; three per frozen iteration (6); eight score.json;
+    three error.txt (the two untouched attempts, the deleted program); seven of eight proposals;
+    method.py and two sweep files for each of six versions (18). SimpleTES programs are AGPL and
+    stay out."""
     report, out = toy_run
     copied = [f for _, _, files in os.walk(out / "workdir") for f in files]
     assert PROGRAM not in copied
-    assert len(copied) == 43
+    assert len(copied) == 44
     assert report["evidence"] == {
-        "copied": 43,
+        "copied": 44,
         "withheld": ["runs/iter0002/tree/attempt_b000_a001/proposal.md"],
     }
 

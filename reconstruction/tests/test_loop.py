@@ -16,7 +16,7 @@ from see.loader import load_policy
 from see.loop import DreamRSI, LoopConfig, archive_name, install_signal_handlers
 from see.objective import run_episode
 from see.pool import context_factory, load_pool
-from see.toy import ScriptedDiscoveryAgent, ScriptedPolicyAgent, evaluate, make_task
+from see.toy import PROGRAM, ScriptedDiscoveryAgent, ScriptedPolicyAgent, evaluate, make_task
 from see.world import Trace
 
 
@@ -100,7 +100,12 @@ def test_agent_crash_is_a_failed_attempt_not_a_failed_episode(tmp_path, stub_pro
     def crashes_on_roots(prompt, *, cwd, target):
         if target.endswith("_a000"):
             raise RuntimeError("agent process died")
-        return {"returncode": 0}  # leaves the resumed program untouched
+        path = os.path.join(target, PROGRAM)
+        with open(path) as f:
+            x = json.load(f)["x"]
+        with open(path, "w") as f:  # re-saved: a real edit that keeps the resumed x
+            json.dump({"x": x}, f, indent=1)
+        return {"returncode": 0}
 
     tree = tmp_path / "tree"
     tree.mkdir()
@@ -123,6 +128,145 @@ def test_agent_crash_is_a_failed_attempt_not_a_failed_episode(tmp_path, stub_pro
     obs = q.probe_batch(q.legal_actions())
     assert [o.fail_class for o in obs] == ["ok", "ok"] and obs[0].score == 1.0
     assert obs[0].delta_vs_parent is None  # the parent failed
+
+
+def _counting(task):
+    """The toy task with an evaluator that records every call."""
+    calls = []
+
+    def evaluate(path):
+        calls.append(path)
+        return task.evaluate(path)
+
+    return dataclasses.replace(task, evaluate=evaluate), calls
+
+
+def test_an_agent_that_changes_nothing_is_no_program_and_never_evaluated(tmp_path, stub_prompts):
+    """D2a: agents stopped by a quota error left their programs as copied, and the loop scored
+    those copies as fresh `ok` attempts, so evaluation noise read as improvement. An attempt whose
+    agent changed nothing, whether it returned or timed out, is `no_program` and not evaluated."""
+    task, calls = _counting(make_task(str(tmp_path)))
+
+    def changes_nothing(prompt, *, cwd, target):
+        if target.endswith("attempt_b001_a000"):
+            return {"returncode": None, "timed_out": True, "stderr": "agent timed out after 9s"}
+        return {"returncode": 3, "stderr": "quota exhausted"}
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    q = LiveQuestion(
+        task,
+        changes_nothing,
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=2,
+        branch_count=2,
+        refine_count=0,
+    )
+    obs = q.probe_batch(q.legal_roots())
+    assert [(o.cell_id, o.fail_class, o.evaluated, o.score) for o in obs] == [
+        ("b0a0", "no_program", False, 0.0),
+        ("b1a0", "no_program", False, 0.0),
+    ]
+    assert calls == []
+    node = tree / "attempt_b000_a000"
+    with open(node / "eval" / "score.json") as f:
+        score = json.load(f)
+    assert (score["untouched"], score["agent_returncode"]) == (True, 3)
+    assert score["error"] == "agent left its program unchanged (quota exhausted)"
+    assert (node / PROGRAM).exists()  # kept, so a child resumes the same bytes
+
+
+def test_a_source_edited_mid_attempt_does_not_hide_an_untouched_program(tmp_path, stub_prompts):
+    """Agents run with the whole tree as their working directory, so another agent may rewrite
+    the parent's program while this attempt runs. The check compares the attempt's program with
+    the bytes copied in, not with the source as it stands afterwards."""
+    task, calls = _counting(make_task(str(tmp_path)))
+
+    def rewrites_its_parent(prompt, *, cwd, target):
+        if target.endswith("_a001"):  # leaves its own copy alone, rewrites the parent's
+            with open(os.path.join(cwd, "attempt_b000_a000", PROGRAM), "w") as f:
+                json.dump({"x": 5.0}, f)
+        else:
+            with open(os.path.join(target, PROGRAM), "w") as f:
+                json.dump({"x": 2.0}, f)
+        return {"returncode": 0}
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    q = LiveQuestion(
+        task,
+        rewrites_its_parent,
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=1,
+        branch_count=1,
+        refine_count=1,
+    )
+    q.probe_batch(q.legal_roots())
+    [obs] = q.probe_batch(q.legal_actions())
+    assert (obs.cell_id, obs.fail_class, obs.evaluated) == ("b0a1", "no_program", False)
+    assert len(calls) == 1  # the root only
+
+
+def test_a_program_the_check_cannot_read_is_left_to_the_evaluator(tmp_path, stub_prompts):
+    """An agent that replaces its program with something unreadable, here a directory, gets one
+    failed cell from the evaluator, as before the untouched check existed, not a fault that
+    abandons the whole batch."""
+
+    def replaces_it_with_a_directory(prompt, *, cwd, target):
+        path = os.path.join(target, PROGRAM)
+        os.remove(path)
+        os.mkdir(path)
+        return {"returncode": 0}
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    q = LiveQuestion(
+        make_task(str(tmp_path)),
+        replaces_it_with_a_directory,
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=1,
+        branch_count=1,
+        refine_count=0,
+    )
+    [obs] = q.probe_batch(q.legal_roots())
+    assert (obs.fail_class, obs.evaluated, obs.score) == ("code", True, 0.0)
+
+
+def test_score_json_keeps_the_agents_stderr_tail(tmp_path, stub_prompts):
+    """D2a's workdir kept each agent's exit code but not its stderr, so it could not tell a quota
+    error from a lost login. The exit code stays a record, not a failure class: this agent exits
+    3 after a real edit, and its attempt is an ordinary success."""
+
+    def edits_then_exits_3(prompt, *, cwd, target):
+        with open(os.path.join(target, PROGRAM), "w") as f:
+            json.dump({"x": 2.0}, f)
+        return {"returncode": 3, "stdout": "the reply", "stderr": "HTTP 429: quota exhausted"}
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    q = LiveQuestion(
+        make_task(str(tmp_path)),
+        edits_then_exits_3,
+        str(tree),
+        str(tmp_path / "hist"),
+        1.0,
+        max_parallelism=1,
+        branch_count=1,
+        refine_count=0,
+    )
+    [obs] = q.probe_batch(q.legal_roots())
+    with open(tree / "attempt_b000_a000" / "eval" / "score.json") as f:
+        score = json.load(f)
+    assert (obs.fail_class, obs.score) == ("ok", 2.0)
+    assert (score["agent_returncode"], score["agent_stderr"]) == (3, "HTTP 429: quota exhausted")
+    assert score["untouched"] is False  # recorded either way, so a reader can tell it was checked
+    assert "the reply" not in json.dumps(score)  # stdout can quote the program: never kept
 
 
 class _Interrupted(BaseException):

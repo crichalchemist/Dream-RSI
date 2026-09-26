@@ -14,6 +14,7 @@ from __future__ import annotations
 import collections
 import concurrent.futures
 import dataclasses
+import hashlib
 import json
 import numbers
 import os
@@ -204,6 +205,15 @@ class CommandAgent:
                 pipe.close()
 
 
+def _sha256(path: str) -> str | None:
+    """The file's digest, or None when it cannot be read: the evaluator then judges it."""
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
 def oriented_score(task: TaskSpec, result: dict) -> float:
     score = float(result.get("combined_score", 0.0) or 0.0)
     return score if task.higher_is_better else -score
@@ -344,6 +354,8 @@ class LiveQuestion(Question):
         shutil.copy(
             self._resume_from(meta.branch, meta.attempt), os.path.join(node, t.eval_program)
         )
+        # the copy, not the source: agents run in the whole tree, so another may edit the source
+        copied = _sha256(os.path.join(node, t.eval_program))
         prompt = exploration_prompt(
             node_dir=node,
             history_dir=self.history_dir,
@@ -364,11 +376,20 @@ class LiveQuestion(Question):
                 os.remove(program)
         if self._cancelled.is_set():  # _cancel killed the agent: do not evaluate what it left
             raise RuntimeError(f"attempt b{meta.branch}a{meta.attempt} killed with its batch")
+        digest = _sha256(program) if os.path.exists(program) else None
+        untouched = digest is not None and digest == copied
         if not os.path.exists(program):
             result = {
                 "combined_score": 0.0,
                 "no_program": True,
                 "error": f"agent left no program ({(run or {}).get('stderr', '')[:200]})",
+            }
+        elif untouched:  # the agent changed nothing: there is nothing new to score
+            stderr = (run or {}).get("stderr", "")
+            result = {
+                "combined_score": 0.0,
+                "no_program": True,
+                "error": f"agent left its program unchanged ({stderr[:200]})",
             }
         else:
             result = self._evaluate(program)
@@ -388,6 +409,8 @@ class LiveQuestion(Question):
                     "seconds": time.time() - started,
                     "agent_returncode": run.get("returncode") if run else None,
                     "agent_timed_out": bool(run.get("timed_out")) if run else False,
+                    "agent_stderr": run.get("stderr") if run else None,
+                    "untouched": untouched,
                 },
                 f,
                 indent=1,

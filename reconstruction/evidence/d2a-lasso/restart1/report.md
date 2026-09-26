@@ -20,14 +20,14 @@ Caps in force: fallback 4 x 3 = 16 calls, hard max 6 x 4 = 30 calls. The paper: 
 
 ## 3. Untouched programs
 
-4 of 4 attempts left their resume source byte for byte.
+4 of 4 attempts left their resume source byte for byte. Untouched check covers 4 of 4 attempts.
 
-| Iteration | Cell | Source | Fail class | Agent timed out | Evaluated | Score | Source score |
-|---|---|---|---|---|---|---|---|
-| 2 | b0a0 | baseline | ok | False | True | 0.0151303 | 0.0134266 |
-| 2 | b1a0 | baseline | ok | False | True | 0.0148444 | 0.0134266 |
-| 2 | b2a0 | baseline | ok | False | True | 0.0143934 | 0.0134266 |
-| 2 | b3a0 | baseline | ok | False | True | 0.0150375 | 0.0134266 |
+| Iteration | Cell | Source | Fail class | Agent timed out | Agent returncode | Evaluated | Score | Source score |
+|---|---|---|---|---|---|---|---|---|
+| 2 | b0a0 | baseline | ok | False | 3 | True | 0.0151303 | 0.0134266 |
+| 2 | b1a0 | baseline | ok | False | 3 | True | 0.0148444 | 0.0134266 |
+| 2 | b2a0 | baseline | ok | False | 3 | True | 0.0143934 | 0.0134266 |
+| 2 | b3a0 | baseline | ok | False | 3 | True | 0.0150375 | 0.0134266 |
 
 ## 4. Empty batches
 
@@ -38,9 +38,9 @@ Versions scored minus infinity for an empty batch: none. Live iterations whose p
 
 ## Health
 
-| Iteration | Attempts | Successes | Fail classes | Agent timeouts | No program | Evaluator crashed | Baseline | Best | Error |
-|---|---|---|---|---|---|---|---|---|---|
-| 2 | 4 | 4 | ok 4 | 0 | 0 | 0 | 0.0134266 | 0.0151303 | KeyboardInterrupt: signal 15 |
+| Iteration | Attempts | Successes | Fail classes | Agent timeouts | Agent failures | No program | Evaluator crashed | Baseline | Best | Error |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2 | 4 | 4 | ok 4 | 0 | 4 | 0 | 0 | 0.0134266 | 0.0151303 | KeyboardInterrupt: signal 15 |
 
 | Version | Valid | Reward | Eq. (1) V | Deployed |
 |---|---|---|---|---|

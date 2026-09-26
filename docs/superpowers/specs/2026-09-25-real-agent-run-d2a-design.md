@@ -293,17 +293,26 @@ the outcome.
      a minimal settings file.
    - The pre-flight also checked that `agy plugin list` and `agy mcp list` were empty, and that
      no `.agents/rules` sat above the workdir.
-   - agy's leak probe asked for "Ad-Hoc DSLs", a phrase in the owner's `~/.gemini/GEMINI.md`.
-     "Rule 14" is not in that file.
-2. **Auth must not be shared between concurrent calls.** In the run, parallel `agy` calls shared
-   one `HOME`. At the hourly token refresh they corrupted the token file, and iteration 2's
-   attempts ran unauthenticated.
-   - The fix gives each call its own `HOME`, seeded from a read-only base.
-   - It was verified with four concurrent calls, but never used in a launch.
-   - D2b starts from it.
-3. **Stopped on quota** (owner decision, under the stop rule of section 4). A restart failed its
-   pre-flight on the account's individual Gemini 3.1 Pro quota (HTTP 429), so the run ended
-   with 1 of 2 iterations. The stopped iteration is reported from its aside directory.
+   - agy's leak probe asked for a phrase from the owner's global Gemini instructions
+     (`~/.gemini/GEMINI.md`), since the Claude probe's phrase is not in that file.
+2. **Two failures, quota first.** agy's logs and each attempt's `agent_returncode` show two
+   separate failures.
+   - The account's individual Gemini 3.1 Pro quota ran out during iteration 1's last round, at
+     18:02. Two of that round's agents exited 3, and so did all four of iteration 2's first
+     round.
+   - Parallel `agy` calls sharing one `HOME` corrupted the token file at the hourly refresh
+     (18:18). Iteration 2's second round could not authenticate and exited 1.
+
+   The fix gives each call its own `HOME`, seeded from a read-only base. It addresses the second
+   failure only; it was verified with four concurrent calls but never used in a launch.
+
+   D2b needs:
+   - a quota that holds two iterations of up to 30 calls;
+   - each discovery call's stderr, or its tail, kept beside its exit code. The loop keeps only
+     the exit code, which is why the workdir could not tell quota from auth.
+3. **Stopped** (owner decision, under the stop rule of section 4). A restart failed its
+   pre-flight on the same quota (HTTP 429), so the run ended with 1 of 2 iterations. The
+   stopped iteration is reported from its aside directory.
 4. **Evidence scan.**
    - The scan also counts any `@` address, not only the owner's git email, because the
      Antigravity account's address differs.

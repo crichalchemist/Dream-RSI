@@ -91,8 +91,10 @@
     "timeout": 3
    },
    "agent_timeouts": 2,
+   "agent_failures": 2,
    "no_program": 0,
    "evaluator_crashed": 0,
+   "untouched_unchecked": 0,
    "baseline_score": 0.01342660816773724,
    "best_score": 0.016748848379834706,
    "error": null,
@@ -163,11 +165,13 @@
     "source": "parent",
     "fail_class": "compile_other",
     "agent_timed_out": false,
+    "agent_returncode": 3,
     "evaluated": true,
     "score": 0.0,
     "source_score": 0.0
    }
-  ]
+  ],
+  "unchecked": 0
  },
  "empty_batches": {
   "versions": [],

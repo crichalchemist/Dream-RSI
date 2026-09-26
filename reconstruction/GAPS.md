@@ -155,15 +155,25 @@ account's login ("no longer supported for Gemini Code Assist for individuals"). 
 launch, with a 4 x 3 fallback grid (16 calls), 6 x 4 hard caps (30 calls) and three policy
 versions per iteration. It completed 1 of 2 iterations.
 
-Iteration 2 was stopped during its second round. Its frozen trace holds 4 probes. The second
-round's 4 attempts had been evaluated on disk but never returned to the policy. Concurrent
-`agy` calls sharing one home had corrupted the token file when the hourly access token
-expired. The agent lost authentication, so every later attempt left its program untouched. A
-restart was refused by the account's individual
-Gemini 3.1 Pro quota (HTTP 429), which the run had spent in about one iteration. The full report
-and the evidence subset are in `evidence/d2a-lasso/`, and the stopped iteration's are in
-`evidence/d2a-lasso/restart1/`. The workdir archive stays off the repository (sha256
-`281b49ad4c5c41129e3bb1cd1fe64625fdb1ec99c3baccffa39ea8ea5db3cb2c`).
+The account's individual Gemini 3.1 Pro quota ran out during iteration 1's last round
+(agy logged HTTP 429 from 18:02). Two of that round's four agents exited with code 3: b1a3 after
+editing its program (the iteration's best cell) and b2a3 before writing one.
+
+Iteration 2, under the deployed version, was stopped during its second round:
+- All four first-round agents exited 3 on the quota.
+- Before the second round, concurrent `agy` calls sharing one home had corrupted the token file
+  at the hourly refresh. The second round's agents could not authenticate and exited 1.
+- No agent in iteration 2 changed its program.
+- Its frozen trace holds 4 probes. The second round's 4 attempts were evaluated on disk but
+  never returned to the policy.
+
+A restart's pre-flight was refused by the same quota. The workdir alone does not show these
+causes: the loop keeps each agent's exit code but not its stderr, so they come from agy's own
+logs, which stay outside the workdir.
+
+The full report and the evidence subset are in `evidence/d2a-lasso/`, and the stopped
+iteration's are in `evidence/d2a-lasso/restart1/`. The workdir archive stays off the repository
+(sha256 `281b49ad4c5c41129e3bb1cd1fe64625fdb1ec99c3baccffa39ea8ea5db3cb2c`).
 
 - Per-round calls:
   - iteration 1 (the initial policy) planned 4 x 3 without the fallback and spent 16 probes in
@@ -172,20 +182,31 @@ and the evidence subset are in `evidence/d2a-lasso/`, and the stopped iteration'
     holds 4 probes, and 8 attempts were evaluated on disk.
 
   The caps here are 16 and 30; the paper's are 110 and 640.
-- Out-of-support replay: none. None of the 3 versions replayed on clipped episodes (12 episodes
-  each, none clipped), so none of the deployed ones did either.
+- Out-of-support replay: none of the 3 versions replayed on clipped episodes (12 episodes each).
+  For the deployed version this holds by construction, not by behaviour.
+  - Replay hands `plan_grid` the recorded tree's grid (`trace_branch_count`,
+    `trace_refine_count`, set in `see/pool.py`); a live context leaves both None.
+  - Version m2 clamps its plan to those fields, so every replay episode planned 4 x 3.
+  - Live, in iteration 2, the same version planned 4 x 4, deeper than any recorded tree.
+
+  Measuring out-of-support plans needs a signal that does not depend on those fields.
 - Untouched programs:
-  - 1 of 16 attempts left its resume source byte for byte (iteration 1, b2a3). Its source was
-    the parent, its fail class `compile_other`, and the agent did not time out; it scored 0,
-    against a source score of 0.
-  - In the stopped iteration, all 8 attempts evaluated on disk did (b0a0–b3a1, all `ok`),
-    because the agent never ran; each program is the baseline's. The report counts the 4 in the
-    frozen trace.
+  - 1 of 16 attempts left its resume source byte for byte (iteration 1, b2a3). Its agent exited
+    3 on the quota before writing a program, so the evaluator re-ran its parent's program
+    (`compile_other`, 0 against 0). This agent did not choose to leave the program unchanged, and
+    iteration 1 has no case where one did.
+  - In the stopped iteration, all 8 attempts evaluated on disk did (b0a0–b3a1, all `ok`). Every
+    agent exited non-zero, 3 on the quota and then 1 on auth, and each program is the baseline's.
+    The report counts the 4 in the frozen trace.
 - Empty batches: none among the versions, and none among the live iterations.
 - Health of iteration 1:
   - 16 attempts and 11 successes; fail classes ok 11, timeout 3, compile_other 2;
-  - 2 agent timeouts, 0 attempts without a program, 0 evaluator crashes;
+  - 2 agent timeouts, 2 agents that exited non-zero, 0 attempts without a program,
+    0 evaluator crashes;
   - baseline 0.0134266, best 0.0167488.
+
+  Two of the 11 successes scored 0, with 16 and 14 of 17 instances valid (b0a0, b0a2).
+  SimpleTES reports validity 1.0 and no error for them, so the loop classes them `ok`.
 
   Version rewards were m0 0.475, m1 0.4529 and m2 0.532062; m2 was deployed.
 - Evaluation noise in the run: the stopped iteration's eight evaluations of the unchanged

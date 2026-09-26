@@ -23,11 +23,11 @@ Caps in force: fallback 4 x 3 = 16 calls, hard max 6 x 4 = 30 calls. The paper: 
 
 ## 3. Untouched programs
 
-1 of 16 attempts left their resume source byte for byte.
+1 of 16 attempts left their resume source byte for byte. Untouched check covers 16 of 16 attempts.
 
-| Iteration | Cell | Source | Fail class | Agent timed out | Evaluated | Score | Source score |
-|---|---|---|---|---|---|---|---|
-| 1 | b2a3 | parent | compile_other | False | True | 0 | 0 |
+| Iteration | Cell | Source | Fail class | Agent timed out | Agent returncode | Evaluated | Score | Source score |
+|---|---|---|---|---|---|---|---|---|
+| 1 | b2a3 | parent | compile_other | False | 3 | True | 0 | 0 |
 
 ## 4. Empty batches
 
@@ -38,9 +38,9 @@ Versions scored minus infinity for an empty batch: none. Live iterations whose p
 
 ## Health
 
-| Iteration | Attempts | Successes | Fail classes | Agent timeouts | No program | Evaluator crashed | Baseline | Best | Error |
-|---|---|---|---|---|---|---|---|---|---|
-| 1 | 16 | 11 | compile_other 2, ok 11, timeout 3 | 2 | 0 | 0 | 0.0134266 | 0.0167488 |  |
+| Iteration | Attempts | Successes | Fail classes | Agent timeouts | Agent failures | No program | Evaluator crashed | Baseline | Best | Error |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 16 | 11 | compile_other 2, ok 11, timeout 3 | 2 | 2 | 0 | 0 | 0.0134266 | 0.0167488 |  |
 
 | Version | Valid | Reward | Eq. (1) V | Deployed |
 |---|---|---|---|---|

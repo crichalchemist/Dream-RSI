@@ -86,7 +86,7 @@ see/pool.py, loader.py      trace pool and policy-file loading
 see/tasks.py                SimpleTES task adapter
 see/toy.py, synthetic.py    toy task, scripted agents, synthetic trees (tests/demo only)
 scripts/                    verify_lasso.py, run_dream_rsi.py, report_run.py
-evidence/                   committed run evidence: reports, traces, scores (no programs)
+evidence/                   committed run evidence: reports, traces, scores (no attempt programs)
 ```
 
 `generated/` is not committed. It holds the paper's own text (© 2026 Google),

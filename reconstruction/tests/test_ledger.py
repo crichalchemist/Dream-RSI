@@ -99,7 +99,7 @@ def test_an_error_in_either_episode_set_invalidates_both_objectives():
 
 def test_an_out_of_support_plan_is_flagged_and_scored_as_its_clipped_grid():
     """Replay clips a plan wider than the recorded tree to the tree and scores it like the
-    clipped plan; the flag is informational (zero-versus-clip is a D2 decision, GAPS §3)."""
+    clipped plan; the flag is informational (zero versus clip, kept after the D2a run, GAPS §3)."""
     trace = synthetic_trace(0, branches=5, refine=6, max_parallelism=5)
     context = GridPlanningContext(
         history=(),

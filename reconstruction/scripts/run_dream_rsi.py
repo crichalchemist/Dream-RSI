@@ -90,6 +90,7 @@ def launch_record(a, argv: list, task: TaskSpec, discovery, policy) -> dict:
             "hard_max_grid": list(a.hard_max),
             "objective": a.objective,
             "agent_timeout": a.agent_timeout,
+            "eval_repeats": a.eval_repeats,
         },
         "agents": {
             "discovery": {"argv": discovery.argv, "version": cli_version(discovery.argv)},
@@ -120,6 +121,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--hard-max", type=int, nargs=2, default=(32, 19))
     ap.add_argument("--objective", choices=OBJECTIVES, default="pareto")
     ap.add_argument(
+        "--eval-repeats",
+        type=int,
+        default=1,
+        help="evaluations per program, odd; the median run is kept (default: 1, as the paper)",
+    )
+    ap.add_argument(
         "--eigen-include",
         help="directory holding Eigen/ for the Lasso evaluator, e.g. /opt/local/include/eigen3 "
         "(default: the evaluator's /usr/include/eigen3)",
@@ -139,15 +146,17 @@ def main(argv=None):
         fallback_grid=tuple(a.grid),
         hard_max_grid=tuple(a.hard_max),
         objective=a.objective,
+        eval_repeats=a.eval_repeats,
     )
     task = simpletes_task(a.simpletes, a.task, a.workdir, eigen_include=a.eigen_include)
     discovery = agent(a.discovery_agent, a.agent_timeout)
     policy = agent(a.policy_agent, a.agent_timeout)
+    loop = DreamRSI(cfg, task, discovery, policy)
+    loop.check_iteration(loop.state["iteration"] + 1)  # a refused restart records no launch
     record_launch(
         a.workdir,
         launch_record(a, sys.argv if argv is None else list(argv), task, discovery, policy),
     )
-    loop = DreamRSI(cfg, task, discovery, policy)
     state = loop.run()
     print(json.dumps(state["log"][-1], indent=1, default=str))
 

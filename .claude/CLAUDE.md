@@ -85,9 +85,13 @@ ones the paper's Listing 2 prompt quotes, so do not rename them.
 **One `question` API, two backends.** A policy interacts only with a `Question`. `see/world.py`
 provides `Trace` (the frozen tree: root plus disjoint branch chains, cell `(branch, attempt)`) and
 `ReplayQuestion`; `see/live.py` provides `LiveQuestion`, which answers the same calls by running a
-real agent in `runs/iterNNNN/tree/attempt_*/` workspaces. The policy cannot tell them apart, which
-is what makes replay evaluation valid. Replay only reveals what the recorded tree contains — a
-policy that goes wider or deeper than the behaviour policy is truncated (GAPS.md §6).
+real agent in `runs/iterNNNN/tree/attempt_*/` workspaces. Through the `Question` the policy cannot
+tell them apart, which is what makes replay evaluation valid. Its `GridPlanningContext` can: the
+`trace_*` fields are set only in replay, so each replay episode also records the plan made with
+them cleared. Replay's history also stops before the replayed trace, so that plan is not the one
+`online()` would run next (GAPS.md §3, "Live-plan signal in replay"). Replay only reveals what
+the recorded tree contains — a policy that goes wider or deeper than the behaviour policy is
+truncated (GAPS.md §6).
 
 **Policy contract is frozen.** `see/policy/api.py` (`LLMDesignedMethod`, `GridPlan`,
 `GridPlanningContext`, `Observation`, `CellMeta`, `SimResult`) and
@@ -131,5 +135,7 @@ prompts from `generated/`, which is why extraction is a prerequisite.
   points do not map, which run no cleanup, check for a surviving `see sweep` process first.
 - `*.local.md` files are private maintainer notes and are gitignored.
 - `evidence/` holds committed run evidence written by tools, never an attempt's program
-  (SimpleTES is AGPL): `report_run.py --copy-evidence` copies an allowlist and withholds any
-  file quoting `CPP_CODE`. It is excluded from ruff and the whitespace hooks, kept as written.
+  (SimpleTES is AGPL): `report_run.py --copy-evidence` copies an allowlist, withholds any
+  file quoting `CPP_CODE` and any JSON that does not parse, and in the rest (and in the report
+  itself) replaces compiler-quoted source lines, this host's home and temp paths, and email
+  addresses. It is excluded from ruff and the whitespace hooks, kept as written.

@@ -1,4 +1,4 @@
-"""Turn a Dream-RSI workdir into the D2a evidence report: report.md and report.json.
+"""Turn a Dream-RSI workdir into its run report: report.md and report.json.
 
     python scripts/report_run.py --workdir ~/dream-rsi-runs/d2a-lasso --out evidence/d2a-lasso \\
         --host-json evidence/d2a-lasso/host.json --archive ~/dream-rsi-runs/d2a-lasso.tar.gz \\
@@ -20,7 +20,11 @@ import glob
 import hashlib
 import json
 import os
+import re
 import shutil
+import statistics
+import tempfile
+from typing import Any
 
 from see.live import node_dirname
 from see.world import Trace
@@ -46,6 +50,16 @@ EVIDENCE = (
 PROGRAM_MARKER = (
     "CPP_CODE"  # opens every SimpleTES Lasso program (AGPL); a file quoting it stays out
 )
+# Rewritten in every copied file and in the report itself (D2b spec section 6.2): what D2a's
+# evidence commit had to redact by hand.
+SOURCE_LINE = re.compile(r"^ *\d+ \| .*$", re.M)  # a compiler quoting source: "   79 |   y = x;"
+ADDRESS = re.compile(r"[\w.%+-]+@[\w-]+(?:\.[\w-]+)+")
+REDACTIONS = {
+    "source_lines": "source lines withheld",
+    "temp_paths": "temp paths shortened to $TMPDIR",
+    "home_paths": "home paths shortened to ~",
+    "addresses": "addresses withheld",
+}
 
 
 def _json(path: str):
@@ -106,8 +120,8 @@ def analyse_iteration(workdir: str, run_dir: str, frozen: str, program: str) -> 
     tree = os.path.join(run_dir, "tree")
     baseline_dir = os.path.join(workdir, "task", "baseline")
     t = manifest["iteration"]
-    timeouts = crashed = failures = unchecked = 0
-    untouched = []
+    timeouts = crashed = failures = unchecked = flagged = 0
+    flag_recorded, spreads, untouched = False, [], []
     for c in sorted(trace.cells.values(), key=lambda c: c.seq):
         node = os.path.join(tree, node_dirname(c.branch, c.attempt))
         score_path = os.path.join(node, "eval", "score.json")
@@ -116,14 +130,24 @@ def analyse_iteration(workdir: str, run_dir: str, frozen: str, program: str) -> 
         crashed += bool(score.get("evaluator_crashed"))
         returncode = score.get("agent_returncode")
         failures += returncode is not None and returncode != 0
+        loop_says = score.get("untouched")  # the loop's own check; absent before D2b
+        flag_recorded = flag_recorded or "untouched" in score
+        flagged += loop_says is True
+        runs = score.get("repeat_scores") or []
+        # a run that failed stops the repeats: the gap to it is a failure, not evaluation noise
+        if len(runs) > 1 and not score.get("error") and statistics.median(runs) > 0:
+            spreads.append((max(runs) - min(runs)) / statistics.median(runs))
         mine = os.path.join(node, program)
         source, source_attempt = resume_source(tree, baseline_dir, program, c.branch, c.attempt)
-        if not os.path.exists(mine):
-            # a cell the agent left a program for (fail_class != "no_program") but whose file is
-            # gone from disk (e.g. a report run on a program-stripped copy) cannot be checked
-            unchecked += c.fail_class != "no_program"
-            continue
-        if _bytes(mine) != _bytes(source):
+        if os.path.exists(mine):
+            identical = _bytes(mine) == _bytes(source)
+        else:
+            # a cell whose file is gone from disk (e.g. a report run on a program-stripped copy)
+            # cannot be checked, unless its agent left no program at all; an untouched attempt is
+            # "no_program" too, but its program was there
+            unchecked += c.fail_class != "no_program" or loop_says is True
+            identical = None
+        if not identical and not loop_says:
             continue
         if source_attempt is None:
             kind, source_score = "baseline", trace.baseline_score
@@ -142,6 +166,11 @@ def analyse_iteration(workdir: str, run_dir: str, frozen: str, program: str) -> 
                 "evaluated": c.evaluated,
                 "score": c.score,
                 "source_score": source_score,
+                "byte_identical": identical,
+                "loop_untouched": loop_says,
+                "agent_stderr": _last_line(score["agent_stderr"] or "")
+                if "agent_stderr" in score
+                else None,  # absent before D2b
             }
         )
     planned = manifest.get("planned_grid")
@@ -165,6 +194,8 @@ def analyse_iteration(workdir: str, run_dir: str, frozen: str, program: str) -> 
         "no_program": fail_classes.get("no_program", 0),
         "evaluator_crashed": crashed,
         "untouched_unchecked": unchecked,
+        "loop_untouched": flagged if flag_recorded else None,
+        "repeat_spread": statistics.median(spreads) if spreads else None,
         "baseline_score": trace.baseline_score,
         "best_score": manifest.get("best_score"),
         "error": manifest.get("error"),
@@ -182,6 +213,11 @@ def analyse_version(rdir: str, grids: dict, fallback, selected: set) -> dict:
     report = _json(report_path) if os.path.exists(report_path) else {}
     episodes = _jsonl(os.path.join(results, "policy_execution_traces.jsonl"))
     clipped = [e for e in episodes if e["out_of_support"]]
+    measured = bool(episodes) and all("beyond_support" in e for e in episodes)  # D2b onwards
+    beyond = [e for e in episodes if e.get("beyond_support")]
+    live_asked = {(e["live_plan"]["branch_count"], e["live_plan"]["refine_count"]) for e in beyond}
+    # raised when asked without the trace fields, given that replay's history
+    raised = sum(1 for e in episodes if e.get("live_plan_error"))
     asked = {
         (e["plan"]["branch_count"], e["plan"]["refine_count"]) if e["plan"] else tuple(fallback)
         for e in clipped
@@ -200,6 +236,9 @@ def analyse_version(rdir: str, grids: dict, fallback, selected: set) -> dict:
         "clipped": len(clipped),
         "asked": [list(a) for a in sorted(asked)],
         "recorded": [list(g) for g in sorted(recorded)],
+        "beyond_support": len(beyond) if measured else None,
+        "live_asked": [list(g) for g in sorted(live_asked)],
+        "live_plan_errors": raised if measured else None,
         "episode_errors": sum(1 for e in episodes if e["error"]),
         "cause": cause(errors),
         "first_error": _last_line(errors[0]) if errors else None,
@@ -228,9 +267,52 @@ def sha256_of(path: str) -> str:
     return h.hexdigest()
 
 
+def redact(text: str, counts: collections.Counter) -> str:
+    """``text`` without quoted program source, this host's temp and home paths, or email
+    addresses; each rule's replacements are added to ``counts``."""
+    text, n = SOURCE_LINE.subn("[source line withheld]", text)
+    counts["source_lines"] += n
+    for rule, directory, short in (  # the temp directory first: it may lie under the home one
+        ("temp_paths", tempfile.gettempdir(), "$TMPDIR"),
+        ("home_paths", os.path.expanduser("~"), "~"),
+    ):
+        if directory.rstrip(os.sep):  # a home of "/" would match every absolute path
+            # the directory itself or any path under it, never a longer name that starts with it
+            text, n = re.subn(re.escape(directory) + r"(?![\w-])", short, text)
+            counts[rule] += n
+    text, n = ADDRESS.subn("[address withheld]", text)
+    counts["addresses"] += n
+    return text
+
+
+def redact_json(value: Any, counts: collections.Counter) -> Any:
+    """``redact`` applied to every string in a parsed JSON value, keys included."""
+    if isinstance(value, str):
+        return redact(value, counts)
+    if isinstance(value, list):
+        return [redact_json(v, counts) for v in value]
+    if isinstance(value, dict):
+        return {redact(k, counts): redact_json(v, counts) for k, v in value.items()}
+    return value
+
+
+def _redacted_copy(path: str, text: str, counts: collections.Counter) -> str:
+    """JSON is redacted value by value, so a quoted line between escaped newlines is caught and
+    the copy stays valid JSON."""
+    if path.endswith(".jsonl"):
+        lines = [json.loads(line) for line in text.splitlines() if line.strip()]
+        return "".join(json.dumps(redact_json(v, counts)) + "\n" for v in lines)
+    if path.endswith(".json"):
+        return json.dumps(redact_json(json.loads(text), counts), indent=1) + "\n"
+    return redact(text, counts)
+
+
 def copy_evidence(workdir: str, dest: str) -> dict:
-    """Copy the EVIDENCE subset under ``dest``, withholding any file that quotes a program."""
+    """Copy the EVIDENCE subset under ``dest``, withholding any file that quotes a program or is
+    JSON that does not parse (a killed run can leave one cut short, and unparsed it cannot be
+    checked), and redacting the rest; a file no rule touches is copied byte for byte."""
     copied, withheld = 0, []
+    matches, files = collections.Counter(), collections.Counter()
     workdir_real = os.path.realpath(workdir)
     for pattern in EVIDENCE:
         for path in sorted(glob.glob(os.path.join(glob.escape(workdir), pattern))):
@@ -241,14 +323,28 @@ def copy_evidence(workdir: str, dest: str) -> dict:
                 withheld.append(rel)
                 continue
             with open(path, errors="replace") as f:
-                if PROGRAM_MARKER in f.read():
-                    withheld.append(rel)
-                    continue
+                text = f.read()
+            if PROGRAM_MARKER in text:
+                withheld.append(rel)
+                continue
+            counts = collections.Counter()
+            try:
+                published = _redacted_copy(path, text, counts)
+            except json.JSONDecodeError:
+                withheld.append(rel)
+                continue
             target = os.path.join(dest, rel)
             os.makedirs(os.path.dirname(target), exist_ok=True)
-            shutil.copyfile(path, target)
+            if sum(counts.values()):
+                with open(target, "w") as f:
+                    f.write(published)
+            else:
+                shutil.copyfile(path, target)
+            matches.update(counts)
+            files.update(rule for rule, n in counts.items() if n)
             copied += 1
-    return {"copied": copied, "withheld": withheld}
+    redacted = {rule: {"matches": matches[rule], "files": files[rule]} for rule in REDACTIONS}
+    return {"copied": copied, "withheld": withheld, "redacted": redacted}
 
 
 def _home_relative(path: str) -> str:
@@ -284,6 +380,8 @@ def build_report(workdir: str, host_json: str | None = None, archive: str | None
     history = os.path.join(glob.escape(workdir), "policy_dev", "history", "r*")
     versions = [analyse_version(r, grids, fallback, selected) for r in sorted(glob.glob(history))]
     flagged = [v for v in versions if v["clipped"]]
+    beyond = [v for v in versions if v["beyond_support"]]
+    flags = [r["loop_untouched"] for r in rows]
     return {
         "workdir": _home_relative(workdir),
         "launches": len(launches),
@@ -297,6 +395,7 @@ def build_report(workdir: str, host_json: str | None = None, archive: str | None
             "hard_max_calls": calls(hard_max),
             "paper_calls": PAPER_CALLS,
         },
+        "eval_repeats": launch["config"].get("eval_repeats"),  # absent before D2b
         "archive": {"file": os.path.basename(archive), "sha256": sha256_of(archive)}
         if archive
         else None,
@@ -306,11 +405,15 @@ def build_report(workdir: str, host_json: str | None = None, archive: str | None
         "out_of_support": {
             "flagged": [v["version"] for v in flagged],
             "flagged_deployed": [v["version"] for v in flagged if v["deployed"]],
+            "beyond_support": [v["version"] for v in beyond],
+            "beyond_support_deployed": [v["version"] for v in beyond if v["deployed"]],
+            "measured": any(v["beyond_support"] is not None for v in versions),
         },
         "untouched": {
             "attempts": sum(r["attempts"] for r in rows),
             "cases": untouched,
             "unchecked": sum(r["untouched_unchecked"] for r in rows),
+            "loop_flagged": sum(flags) if flags and None not in flags else None,
         },
         "empty_batches": {
             "versions": [v["version"] for v in versions if v["cause"] == "empty_batch"],
@@ -328,6 +431,11 @@ def _num(x) -> str:
     return "n/a" if x is None else f"{x:.6g}" if isinstance(x, float) else str(x)
 
 
+def _measured(x) -> str:
+    """A field the run's code did not yet record reads as such, never as 0 or False."""
+    return "not measured" if x is None else str(x)
+
+
 def _cell(text) -> str:
     """Free text placed in a markdown table cell: newlines collapsed to spaces, ``|`` escaped."""
     return str(text).replace("\n", " ").replace("|", "\\|")
@@ -336,7 +444,7 @@ def _cell(text) -> str:
 def markdown(r: dict) -> str:
     caps = r["caps"]
     out = [
-        "# D2a run report",
+        "# Run report",
         "",
         f"Workdir `{r['workdir']}`, {r['launches']} launch(es), task `{r['task'].get('name')}`.",
     ]
@@ -367,38 +475,67 @@ def markdown(r: dict) -> str:
         "## 2. Out-of-support replay",
         "",
         f"{len(oos['flagged'])} version(s) replayed on clipped episodes; "
-        f"{len(oos['flagged_deployed'])} of them deployed.",
+        f"{len(oos['flagged_deployed'])} of them deployed. "
+        + (
+            f"{len(oos['beyond_support'])} version(s) planned beyond a replayed tree with the "
+            f"trace fields cleared; {len(oos['beyond_support_deployed'])} of them deployed."
+            if oos["measured"]
+            else "Plans beyond a replayed tree with the trace fields cleared: not measured."
+        ),
         "",
-        "| Version | Episodes | Clipped | Asked | Recorded | Deployed |",
-        "|---|---|---|---|---|---|",
+        "| Version | Episodes | Clipped | Asked | Recorded | Beyond support, fields cleared "
+        "| Asked, fields cleared | Deployed |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for v in r["versions"]:
         asked = ", ".join(_grid(a) for a in v["asked"]) or "-"
         recorded = ", ".join(_grid(g) for g in v["recorded"]) or "-"
+        live = ", ".join(_grid(g) for g in v["live_asked"]) or "-"
+        if v["beyond_support"] is None:
+            live = "not measured"
+        beyond = _measured(v["beyond_support"])
+        # raised when asked without the trace fields, given that replay's history
+        if v["live_plan_errors"]:
+            beyond += f" ({v['live_plan_errors']} raised)"
         out.append(
             f"| {v['version']} | {v['episodes']} | {v['clipped']} | {asked} | {recorded} | "
-            f"{v['deployed']} |"
+            f"{beyond} | {live} | {v['deployed']} |"
         )
     u = r["untouched"]
     checked = u["attempts"] - u["unchecked"]
     coverage = f"Untouched check covers {checked} of {u['attempts']} attempts"
     coverage += f"; {u['unchecked']} had no program file on disk." if u["unchecked"] else "."
+    split = [c for c in u["cases"] if None not in (c["loop_untouched"], c["byte_identical"])]
+    split = [c for c in split if c["loop_untouched"] != c["byte_identical"]]
+    loop = (
+        f"The loop marked {u['loop_flagged']} untouched when their agent returned; "
+        f"{len(split)} disagree with the byte check."
+        if u["loop_flagged"] is not None
+        else "The loop's own untouched flag: not measured."
+    )
+    identical = sum(1 for c in u["cases"] if c["byte_identical"])
     out += [
         "",
         "## 3. Untouched programs",
         "",
-        f"{len(u['cases'])} of {checked} attempts left their resume source byte for byte. "
-        + coverage,
+        f"{identical} of {checked} attempts left their resume source byte for byte. "
+        + coverage
+        + " "
+        + loop,
         "",
         "| Iteration | Cell | Source | Fail class | Agent timed out | Agent returncode | "
-        "Evaluated | Score | Source score |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "Evaluated | Score | Source score | Byte identical | Loop flag "
+        "| Agent stderr (last line) |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for c in u["cases"]:
+        flag = _measured(c["loop_untouched"]) + (" (disagrees)" if c in split else "")
+        stderr = "not measured" if c["agent_stderr"] is None else (_cell(c["agent_stderr"]) or "-")
         out.append(
             f"| {c['iteration']} | {c['cell']} | {c['source']} | {c['fail_class']} | "
             f"{c['agent_timed_out']} | {_num(c['agent_returncode'])} | {c['evaluated']} | "
-            f"{_num(c['score'])} | {_num(c['source_score'])} |"
+            f"{_num(c['score'])} | {_num(c['source_score'])} | {_measured(c['byte_identical'])} "
+            f"| {flag} | {stderr} |"
         )
     e = r["empty_batches"]
     out += [
@@ -422,17 +559,20 @@ def markdown(r: dict) -> str:
         "",
         "## Health",
         "",
+        f"Evaluation repeats in force: {_measured(r['eval_repeats'])}.",
+        "",
         "| Iteration | Attempts | Successes | Fail classes | Agent timeouts | Agent failures | "
-        "No program | Evaluator crashed | Baseline | Best | Error |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "No program | Evaluator crashed | Baseline | Best | Repeat spread | Error |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for i in r["iterations"]:
         classes = ", ".join(f"{k} {n}" for k, n in i["fail_classes"].items())
+        spread = "not measured" if i["repeat_spread"] is None else _num(i["repeat_spread"])
         out.append(
             f"| {i['iteration']} | {i['attempts']} | {i['successes']} | {classes} | "
             f"{i['agent_timeouts']} | {i['agent_failures']} | {i['no_program']} | "
             f"{i['evaluator_crashed']} | {_num(i['baseline_score'])} | {_num(i['best_score'])} | "
-            f"{_cell(i['error'] or '')} |"
+            f"{spread} | {_cell(i['error'] or '')} |"
         )
     out += ["", "| Version | Valid | Reward | Eq. (1) V | Deployed |", "|---|---|---|---|---|"]
     for v in r["versions"]:
@@ -447,6 +587,21 @@ def markdown(r: dict) -> str:
         out.append(f"- {k}: {v}")
     for role, a in sorted((r["agents"] or {}).items()):
         out.append(f"- {role} agent: `{json.dumps(a.get('argv'))}`, version {a.get('version')}")
+    if r.get("evidence"):
+        ev = r["evidence"]
+        done = [
+            f"{n['matches']} {REDACTIONS[rule]} in {n['files']} file(s)"
+            for rule, n in ev["redacted"].items()
+            if n["matches"]
+        ]
+        out += [
+            "",
+            "## Evidence",
+            "",
+            f"Copied {ev['copied']} file(s); withheld {len(ev['withheld'])} that quote a program, "
+            "lead outside the workdir or do not parse.",
+            f"Redacted at copy time: {'; '.join(done) or 'nothing'}.",
+        ]
     if r["noise"]:
         out += [
             "",
@@ -479,6 +634,7 @@ def main(argv=None) -> dict:
         report["evidence"] = copy_evidence(
             os.path.abspath(a.workdir), os.path.join(a.out, "workdir")
         )
+    report = redact_json(report, collections.Counter())  # published beside the evidence
     with open(os.path.join(a.out, "report.json"), "w") as f:
         json.dump(report, f, indent=1)
     with open(os.path.join(a.out, "report.md"), "w") as f:

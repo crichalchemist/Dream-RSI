@@ -32,7 +32,7 @@ import sys
 import time
 from collections.abc import Callable
 
-from see.live import LiveQuestion, TaskSpec, kill_process_group, oriented_score
+from see.live import LiveQuestion, TaskSpec, kill_process_group, oriented_score, repeated
 from see.loader import load_policy
 from see.objective import DEFAULT_BETAS, DEFAULT_LAMBDA, OBJECTIVES, score_of, validate_plan
 from see.policy.api import GridPlanningContext
@@ -81,10 +81,14 @@ class LoopConfig:
     kill_grace: float = 5.0  # seconds between SIGTERM and SIGKILL for the sweep subprocess
     initial_policy: str = BASELINE_POLICY  # pi_1: the paper starts from parallel refine
     serialize_eval: bool = True
+    eval_repeats: int = 1  # evaluations per program, median kept; 1 is the paper's single one
 
     def __post_init__(self):
         if self.objective not in OBJECTIVES:
             raise ValueError(f"objective {self.objective!r} is not one of {OBJECTIVES}")
+        k = self.eval_repeats
+        if not (isinstance(k, int) and k >= 1 and k % 2 == 1):  # odd: the median is one real run
+            raise ValueError(f"eval_repeats {k!r} is not an odd count of at least 1")
 
 
 class DreamRSI:
@@ -97,6 +101,8 @@ class DreamRSI:
         directions: Callable[[int], str] | None = None,
     ):
         self.c, self.task = config, task
+        if config.eval_repeats > 1:  # the baseline and every attempt are scored the same way
+            self.task = repeated(task, config.eval_repeats)
         self.discovery_agent, self.policy_agent = discovery_agent, policy_agent
         self.directions = directions
         self.w = os.path.abspath(config.workdir)
@@ -152,8 +158,10 @@ class DreamRSI:
             self.offline(t)  # persists the counter together with what it deployed
         return self.state
 
-    def online(self, t: int):
-        """Stage 1: the deployed policy drives discovery; the tree is frozen into the pool."""
+    def check_iteration(self, t: int):
+        """Refuse iteration t before anything runs: its directories exist, or the deployed policy
+        changed since it was deployed. run_dream_rsi.py calls it before recording a launch, so a
+        refused restart leaves no launch line."""
         run_dir = os.path.join(self.w, "runs", f"iter{t:04d}")
         out = os.path.join(self.pool, f"iter{t:04d}")
         # runs/ is created first and trace_pool/ last; any archive of this iteration means it ran
@@ -177,6 +185,12 @@ class DreamRSI:
                     f"{self.state['deployed']} changed since it was deployed (sha256 {digest}, "
                     f"deployed {expected}): refusing to run it"
                 )
+
+    def online(self, t: int):
+        """Stage 1: the deployed policy drives discovery; the tree is frozen into the pool."""
+        self.check_iteration(t)
+        run_dir = os.path.join(self.w, "runs", f"iter{t:04d}")
+        out = os.path.join(self.pool, f"iter{t:04d}")
         policy = load_policy(self.state["deployed"])(None)  # baked-in default beta
         ctx = self._context(self.manifests())
         plan = validate_plan(policy.plan_grid(ctx), ctx)

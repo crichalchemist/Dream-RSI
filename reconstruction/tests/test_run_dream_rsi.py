@@ -8,8 +8,11 @@ import json
 import os
 import subprocess
 
+import pytest
+
 from see.live import CommandAgent, TaskSpec
 from see.loader import load_module_from_path
+from see.toy import make_task
 
 RECON = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 runner = load_module_from_path(
@@ -51,6 +54,16 @@ def test_each_launch_records_the_caps_and_program_file_the_report_reads(tmp_path
     assert r["agents"]["discovery"]["version"].startswith("Python 3")
 
 
+def test_the_launch_record_carries_eval_repeats(tmp_path):
+    """The report reads the repeats in force from the last launch; the default is the paper's
+    single evaluation."""
+    assert _record(tmp_path)["config"]["eval_repeats"] == 1
+    a = runner.build_parser().parse_args([*ARGS, "--eval-repeats", "3"])
+    task = TaskSpec("lasso_path", str(tmp_path), "init_program.py", "p.txt", lambda p: {})
+    agent = CommandAgent(["python3", "-c", "{prompt}"])
+    assert runner.launch_record(a, ARGS, task, agent, agent)["config"]["eval_repeats"] == 3
+
+
 def test_an_env_wrapped_agent_reports_the_version_of_the_cli_it_wraps():
     """An isolated agent's argv starts with ``env HOME=...``: the version is the CLI's."""
     version = runner.cli_version(["env", "HOME=/nonexistent", "python3", "-c", "{prompt}"])
@@ -82,6 +95,19 @@ def test_the_host_facts_name_the_simpletes_checkout_commit(tmp_path):
     ).stdout.strip()
     assert runner.host_facts(RECON, None)["simpletes_commit"] == head
     assert runner.host_facts(str(tmp_path), None)["simpletes_commit"] is None
+
+
+def test_a_refused_restart_records_no_launch(tmp_path, monkeypatch):
+    """report_run.py takes the caps from the last launch line, so a launch the loop refuses must
+    leave none: the restart guard runs before the launch is recorded."""
+    workdir = tmp_path / "w"
+    (workdir / "runs" / "iter0001").mkdir(parents=True)  # an interrupted first iteration
+    monkeypatch.setattr(runner, "install_signal_handlers", lambda: None)  # keep pytest's own
+    monkeypatch.setattr(runner, "simpletes_task", lambda *a, **kw: make_task(str(tmp_path)))
+    argv = [str(workdir) if a == "unused" else a for a in ARGS]
+    with pytest.raises(RuntimeError, match="iteration 1 was interrupted or already ran"):
+        runner.main(argv)
+    assert not (workdir / "launches.jsonl").exists()
 
 
 def test_a_restart_appends_its_launch_and_keeps_the_first(tmp_path):

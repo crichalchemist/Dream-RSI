@@ -10,10 +10,10 @@ that file before trusting any number this code produces.
 
 | Part | Source | State |
 |---|---|---|
-| Replay simulator and policy API (`see.policy.api`, `see.policy.observation_signal`) | Sec. 3, Listing 2 | implemented and tested; same import paths as the paper's prompt |
+| Replay simulator and policy API (`see.policy.api`, `see.policy.observation_signal`) | Sec. 3, Listing 2 | implemented and tested; same import paths as the paper's prompt; each replay episode also records the plan the policy makes with the replay-only `trace_*` fields cleared, given the history before that trace, which is not the plan it would run next live (GAPS §3) |
 | Objectives: Eq. (1) and the beta-sweep `pareto.reward` | Sec. 3, Listing 2 | implemented; AUC/attainment details inferred and pinned (`tests/test_ledger.py`); `pareto` scores the beta grid, `eq1` the default-beta episode |
 | Parallel-refine initial policy | Sec. 4 | implemented |
-| Online rollout: workspaces, parallel workers, agent + evaluator | Sec. 3, Listing 1 | implemented; tested with scripted agents and the real Lasso evaluator; an agent timeout, an interrupt or a fault elsewhere in the batch kills the agent's whole process group, and nothing an agent forked outlives its call (a child that calls `setsid` escapes; GAPS §3 lists the residues); a timed-out attempt is scored as the program it left but recorded as a `timeout` failure |
+| Online rollout: workspaces, parallel workers, agent + evaluator | Sec. 3, Listing 1 | implemented; tested with scripted agents and the real Lasso evaluator; an agent timeout, an interrupt or a fault elsewhere in the batch kills the agent's whole process group, and nothing an agent forked outlives its call (a child that calls `setsid` escapes; GAPS §3 lists the residues); a timed-out attempt is scored as the program it changed but recorded as a `timeout` failure; an attempt whose agent changed nothing is `no_program` and never evaluated; each attempt keeps its agent's exit code and stderr tail |
 | Outer loop: online, pool, M versions, argmax deploy | Sec. 3, Fig. 1 | implemented; tested end to end with scripted agents; replay ≡ live pinned across seeds and both policies; deploy integrity verified by digest when a version is scored, when it is deployed and again when it is loaded; `state.json` is written once per iteration, after the deploy; an interrupt freezes the partial tree under `runs/`, never the pool, and a restart refuses |
 | Prompts (Listings 1, 2) and discovered Lasso solver (Listing 3) | appendix | regenerated from the PDF, verbatim |
 | Lasso and math tasks | SimpleTES | adapter (`see/tasks.py`) |
@@ -51,7 +51,9 @@ python scripts/verify_lasso.py --simpletes ../SimpleTES --downstream --gisette
 
 Run the loop on a paper task with real coding agents. This spends real API
 budget: about 110 discovery calls per round at the paper's 3.1-Pro setting. On macOS add
-`--eigen-include` as above.
+`--eigen-include` as above. `--eval-repeats 3` evaluates each program three times and keeps the
+median run (default 1, the paper's single evaluation); in the D2a run, eight evaluations of one
+unchanged program spread 14%.
 
 ```bash
 python scripts/run_dream_rsi.py --simpletes ../SimpleTES --task lasso_path \
@@ -65,7 +67,8 @@ python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tm
 ```
 
 Turn a run's workdir into counts for the four questions track D2 asks (per-round calls,
-out-of-support replay, untouched programs, empty batches), as `report.md` and `report.json`:
+out-of-support replay, untouched programs, empty batches), as `report.md` and `report.json`;
+`--copy-evidence` also writes the license-safe subset of the workdir, redacted:
 
 ```bash
 python scripts/report_run.py --workdir runs/lasso --out /tmp/report

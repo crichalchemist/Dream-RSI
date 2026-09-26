@@ -399,43 +399,57 @@ class PlansItsParallelism(ParallelRefine):
 """
 
 
+def _synthetic_sweep(tmp_path, source: str, widths, *extra: str) -> dict:
+    """Sweep ``source`` over one synthetic 3 x 2 tree per width, oldest first, each with a
+    manifest, under a 2 x 1 fallback and 8 x 8 caps; the report's next live plan."""
+    pool = tmp_path / "trace_pool"
+    for i, width in enumerate(widths, start=1):
+        cycle = pool / f"iter{i:04d}"
+        cycle.mkdir(parents=True, exist_ok=True)
+        synthetic_trace(i, branches=3, refine=2, max_parallelism=width).save(
+            str(cycle / "trace.json")
+        )
+        (cycle / "live_cycle_manifest.json").write_text(json.dumps({"iteration": i}))
+    method = tmp_path / "method.py"
+    method.write_text(source)
+    out = tmp_path / f"out{len(list(tmp_path.glob('out*')))}"
+    caps = ("--fallback", "2", "1", "--hard-max", "8", "8")
+    main(["sweep", "--method", str(method), "--pool", str(pool), "--out", str(out), *caps, *extra])
+    with open(out / "beta_sweep.json") as f:
+        return json.load(f)["next_live_plan"]
+
+
 def test_the_next_live_plan_uses_the_given_parallelism_else_the_newest_trees(tmp_path):
     """online() plans with LoopConfig.max_parallelism, which the loop's sweep passes; a sweep run
-    by hand without it falls back to the newest recorded tree's: 3 here, where the older tree's
-    is 2."""
-    pool = tmp_path / "trace_pool"
-    for i, width in ((1, 2), (2, 3)):
-        (pool / f"iter{i:04d}").mkdir(parents=True)
-        trace = synthetic_trace(i, branches=3, refine=2, max_parallelism=width)
-        trace.save(str(pool / f"iter{i:04d}" / "trace.json"))
-    method = tmp_path / "method.py"
-    method.write_text(PLANS_ITS_PARALLELISM)
+    by hand without it falls back to the newest recorded tree's: 2 here, where the older and
+    wider tree's is 3."""
+    default = _synthetic_sweep(tmp_path, PLANS_ITS_PARALLELISM, (3, 2))
+    given = _synthetic_sweep(tmp_path, PLANS_ITS_PARALLELISM, (3, 2), "--max-parallelism", "5")
+    assert (default["branch_count"], given["branch_count"]) == (2, 5)
 
-    def planned(out, *extra: str) -> int:
-        caps = ("--fallback", "2", "1", "--hard-max", "8", "8")
-        main(
-            [
-                "sweep",
-                "--method",
-                str(method),
-                "--pool",
-                str(pool),
-                "--out",
-                str(out),
-                *caps,
-                *extra,
-            ]
-        )
-        with open(out / "beta_sweep.json") as f:
-            return json.load(f)["next_live_plan"]["branch_count"]
 
-    assert (
-        planned(tmp_path / "default"),
-        planned(tmp_path / "given", "--max-parallelism", "5"),
-    ) == (
-        3,
-        5,
-    )
+TOUCHES_ITS_HISTORY = """
+from see.policies.parallel_refine import ParallelRefine
+from see.policy.api import GridPlan
+
+NAME = "TouchesItsHistory"
+
+
+class TouchesItsHistory(ParallelRefine):
+    def plan_grid(self, context):
+        if any(m.get("touched") for m in context.history):  # edited by an earlier call
+            return GridPlan(3, 1, reason="history already touched")
+        for m in context.history:
+            m["touched"] = True
+        return GridPlan(2, 1, reason="history as recorded")
+"""
+
+
+def test_the_next_live_plan_reads_the_manifests_afresh_as_online_does(tmp_path):
+    """online() reads every manifest from disk, so a manifest that a replay episode's plan_grid
+    edited in place cannot reach the next live plan: 2 x 1 here, not 3 x 1."""
+    plan = _synthetic_sweep(tmp_path, TOUCHES_ITS_HISTORY, (2, 2))
+    assert (plan["branch_count"], plan["refine_count"]) == (2, 1)
 
 
 NUMPY_WITH_HISTORY = """
@@ -508,21 +522,22 @@ def test_the_next_live_plan_is_made_by_a_freshly_loaded_policy_as_online_makes_i
 
 
 STATE_FROM_PLANNING = """
+import os
+
 from see.policies.parallel_refine import ParallelRefine
 
 NAME = "StateFromPlanning"
+MARKER = {marker!r}  # outside the module, so loading the file afresh keeps it
 
 
 class StateFromPlanning(ParallelRefine):
-    planned_with_history = False
-
     def plan_grid(self, context):
         if context.history:
-            type(self).planned_with_history = True
+            open(MARKER, "w").close()
         return super().plan_grid(context)
 
     def solve(self, question, budget=None):
-        if type(self).planned_with_history:  # probe one root and stop
+        if os.path.exists(MARKER):  # probe one root and stop
             question.reset()
             question.probe_batch(question.legal_roots()[:1])
             return None
@@ -531,10 +546,12 @@ class StateFromPlanning(ParallelRefine):
 
 
 def test_what_planning_the_next_cycle_changes_cannot_change_the_versions_score(tmp_path):
-    """A plan_grid that changes the policy's class once history is present, where solve reads it,
-    scores exactly as its twin: the next live plan is made after the sweep is scored."""
-    for name, source in (("state", STATE_FROM_PLANNING), ("twin", PARALLEL_REFINE)):
-        (tmp_path / f"{name}.py").write_text(source)
+    """A plan_grid that leaves state outside its module once history is present (a file here),
+    which solve reads, scores exactly as its twin: loading the file afresh cannot undo such
+    state, so it is the next live plan being made after the sweep is scored that keeps it out."""
+    marker = tmp_path / "planned_with_history"
+    (tmp_path / "state.py").write_text(STATE_FROM_PLANNING.format(marker=str(marker)))
+    (tmp_path / "twin.py").write_text(PARALLEL_REFINE)
     state = _sweep_d2a(str(tmp_path / "state.py"), tmp_path / "state")
     twin = _sweep_d2a(str(tmp_path / "twin.py"), tmp_path / "twin")
     assert (state["valid"], state["errors"], state["pareto"]) == (
@@ -542,6 +559,7 @@ def test_what_planning_the_next_cycle_changes_cannot_change_the_versions_score(t
         twin["errors"],
         twin["pareto"],
     )
+    assert marker.exists()  # the next live plan did plan with history
 
 
 def test_the_floor_is_reswept_for_reference_and_never_deployed(tmp_path, stub_prompts):

@@ -35,4 +35,4 @@ jobs:
       - run: python tools/extract_listings.py --check
       - run: python tools/extract_listings.py
       - run: python -m pytest -q --junitxml=report.xml
-      - run: python tools/check_junit.py report.xml --expect 164
+      - run: python tools/check_junit.py report.xml --expect 165

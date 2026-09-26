@@ -151,11 +151,12 @@ def main(argv=None):
     task = simpletes_task(a.simpletes, a.task, a.workdir, eigen_include=a.eigen_include)
     discovery = agent(a.discovery_agent, a.agent_timeout)
     policy = agent(a.policy_agent, a.agent_timeout)
+    loop = DreamRSI(cfg, task, discovery, policy)
+    loop.check_iteration(loop.state["iteration"] + 1)  # a refused restart records no launch
     record_launch(
         a.workdir,
         launch_record(a, sys.argv if argv is None else list(argv), task, discovery, policy),
     )
-    loop = DreamRSI(cfg, task, discovery, policy)
     state = loop.run()
     print(json.dumps(state["log"][-1], indent=1, default=str))
 

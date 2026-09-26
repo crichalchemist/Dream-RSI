@@ -8,8 +8,11 @@ import json
 import os
 import subprocess
 
+import pytest
+
 from see.live import CommandAgent, TaskSpec
 from see.loader import load_module_from_path
+from see.toy import make_task
 
 RECON = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 runner = load_module_from_path(
@@ -92,6 +95,19 @@ def test_the_host_facts_name_the_simpletes_checkout_commit(tmp_path):
     ).stdout.strip()
     assert runner.host_facts(RECON, None)["simpletes_commit"] == head
     assert runner.host_facts(str(tmp_path), None)["simpletes_commit"] is None
+
+
+def test_a_refused_restart_records_no_launch(tmp_path, monkeypatch):
+    """report_run.py takes the caps from the last launch line, so a launch the loop refuses must
+    leave none: the restart guard runs before the launch is recorded."""
+    workdir = tmp_path / "w"
+    (workdir / "runs" / "iter0001").mkdir(parents=True)  # an interrupted first iteration
+    monkeypatch.setattr(runner, "install_signal_handlers", lambda: None)  # keep pytest's own
+    monkeypatch.setattr(runner, "simpletes_task", lambda *a, **kw: make_task(str(tmp_path)))
+    argv = [str(workdir) if a == "unused" else a for a in ARGS]
+    with pytest.raises(RuntimeError, match="iteration 1 was interrupted or already ran"):
+        runner.main(argv)
+    assert not (workdir / "launches.jsonl").exists()
 
 
 def test_a_restart_appends_its_launch_and_keeps_the_first(tmp_path):

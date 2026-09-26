@@ -158,8 +158,10 @@ class DreamRSI:
             self.offline(t)  # persists the counter together with what it deployed
         return self.state
 
-    def online(self, t: int):
-        """Stage 1: the deployed policy drives discovery; the tree is frozen into the pool."""
+    def check_iteration(self, t: int):
+        """Refuse iteration t before anything runs: its directories exist, or the deployed policy
+        changed since it was deployed. run_dream_rsi.py calls it before recording a launch, so a
+        refused restart leaves no launch line."""
         run_dir = os.path.join(self.w, "runs", f"iter{t:04d}")
         out = os.path.join(self.pool, f"iter{t:04d}")
         # runs/ is created first and trace_pool/ last; any archive of this iteration means it ran
@@ -183,6 +185,12 @@ class DreamRSI:
                     f"{self.state['deployed']} changed since it was deployed (sha256 {digest}, "
                     f"deployed {expected}): refusing to run it"
                 )
+
+    def online(self, t: int):
+        """Stage 1: the deployed policy drives discovery; the tree is frozen into the pool."""
+        self.check_iteration(t)
+        run_dir = os.path.join(self.w, "runs", f"iter{t:04d}")
+        out = os.path.join(self.pool, f"iter{t:04d}")
         policy = load_policy(self.state["deployed"])(None)  # baked-in default beta
         ctx = self._context(self.manifests())
         plan = validate_plan(policy.plan_grid(ctx), ctx)

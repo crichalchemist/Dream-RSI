@@ -7,7 +7,9 @@ alternates a version that plans one branch wider than any recorded tree (WIDE) a
 on an empty batch (EMPTY). Every expected number below is counted by hand from that script.
 """
 
+import dataclasses
 import glob
+import itertools
 import json
 import os
 import shutil
@@ -90,11 +92,11 @@ class AlternatingPolicy:
         return {"returncode": 0}
 
 
-def _launch(workdir) -> None:
+def _launch(workdir, eval_repeats=1) -> None:
     """The line scripts/run_dream_rsi.py appends to launches.jsonl, cut to what the report reads."""
     line = {
         "task": {"name": "toy", "eval_program": PROGRAM},
-        "config": {"fallback_grid": [2, 1], "hard_max_grid": [3, 2]},
+        "config": {"fallback_grid": [2, 1], "hard_max_grid": [3, 2], "eval_repeats": eval_repeats},
     }
     (workdir / "launches.jsonl").write_text(json.dumps(line) + "\n")
 
@@ -160,10 +162,11 @@ def test_versions_that_plan_wider_than_the_tree_are_flagged_with_their_clipped_e
         ("r0005_t02_m1", 24, 24, [[3, 1]], [[2, 1]], False),
         ("r0006_t02_m2", 24, 0, [], [], False),
     ]
-    assert report["out_of_support"] == {
-        "flagged": ["r0002_t01_m1", "r0005_t02_m1"],
-        "flagged_deployed": [],  # clipped to the tree, WIDE ties m0, and ties keep the earlier
-    }
+    oos = report["out_of_support"]
+    assert (oos["flagged"], oos["flagged_deployed"]) == (
+        ["r0002_t01_m1", "r0005_t02_m1"],
+        [],  # clipped to the tree, WIDE ties m0, and ties keep the earlier
+    )
 
 
 def test_an_untouched_attempt_is_reported_with_its_source_and_both_scores(toy_run):
@@ -171,15 +174,40 @@ def test_an_untouched_attempt_is_reported_with_its_source_and_both_scores(toy_ru
     assert report["untouched"] == {
         "attempts": 8,
         "unchecked": 0,
+        "loop_flagged": 2,
         "cases": [
             {"iteration": 1, "cell": "b0a0", "source": "baseline", "fail_class": "no_program"}
             | {"agent_timed_out": False, "agent_returncode": 0}
-            | {"evaluated": False, "score": 0.0, "source_score": 1.0},
+            | {"evaluated": False, "score": 0.0, "source_score": 1.0}
+            | {"byte_identical": True, "loop_untouched": True, "agent_stderr": ""},
             {"iteration": 1, "cell": "b1a1", "source": "parent", "fail_class": "no_program"}
             | {"agent_timed_out": True, "agent_returncode": None}
-            | {"evaluated": False, "score": 0.0, "source_score": 1.1},
+            | {"evaluated": False, "score": 0.0, "source_score": 1.1}
+            | {"byte_identical": True, "loop_untouched": True}
+            | {"agent_stderr": "agent timed out after 900s"},
         ],
     }
+
+
+def test_versions_that_would_plan_beyond_the_tree_live_are_counted_per_version(toy_run):
+    """WIDE asks for 3 x 1 live too, within the 3 x 2 caps and beyond every 2 x 1 tree, so each
+    of its episodes is beyond support; m0 plans the fallback and EMPTY leaves it to the fallback."""
+    report, _ = toy_run
+    rows = [(v["version"], v["beyond_support"], v["live_asked"]) for v in report["versions"]]
+    assert rows == [
+        ("r0001_t01_m0", 0, []),
+        ("r0002_t01_m1", 12, [[3, 1]]),
+        ("r0003_t01_m2", 0, []),
+        ("r0004_t02_m0", 0, []),
+        ("r0005_t02_m1", 24, [[3, 1]]),
+        ("r0006_t02_m2", 0, []),
+    ]
+    oos = report["out_of_support"]
+    assert (oos["beyond_support"], oos["beyond_support_deployed"], oos["measured"]) == (
+        ["r0002_t01_m1", "r0005_t02_m1"],
+        [],
+        True,
+    )
 
 
 def test_versions_that_end_on_an_empty_batch_are_named_with_their_cause(toy_run):
@@ -287,6 +315,63 @@ def test_a_nonzero_agent_exit_is_counted_as_a_failure_not_a_silent_success(tmp_p
     assert case["agent_returncode"] == 1
 
 
+def test_the_loops_untouched_flag_and_the_byte_check_are_both_shown_and_disagreement_flagged(
+    tmp_path, stub_prompts
+):
+    """The loop decides when the agent returns; the report compares bytes after the run. Agents
+    run in the whole tree, so one that later rewrites the source splits the two: show both."""
+    workdir = tmp_path / "w"
+    workdir.mkdir()
+    _launch(workdir)
+    cfg = _config(workdir, iterations=1, versions=1)
+    DreamRSI(cfg, make_task(str(workdir)), _NonZeroExit(), ScriptedPolicyAgent()).run()
+    source = workdir / "runs" / "iter0001" / "tree" / "attempt_b000_a000" / PROGRAM
+    source.write_text(json.dumps({"x": 9.0}))  # b0a1's source, rewritten after b0a1 returned
+    report = report_run.build_report(str(workdir))
+    (case,) = report["untouched"]["cases"]
+    assert (case["cell"], case["loop_untouched"], case["byte_identical"]) == ("b0a1", True, False)
+    md = report_run.markdown(report)
+    assert "The loop marked 1 untouched when their agent returned; 1 disagree" in md
+    assert "| True (disagrees) |" in md
+
+
+def test_a_workdir_from_before_d2b_reads_not_measured():
+    """D2a's committed evidence predates the live-plan signal, the loop's untouched flag and the
+    repeat setting: the report says so, rather than reading 0 or False."""
+    report = report_run.build_report(os.path.join(RECON, "evidence", "d2a-lasso", "workdir"))
+    assert [v["beyond_support"] for v in report["versions"]] == [None, None, None]
+    assert (report["eval_repeats"], report["untouched"]["loop_flagged"]) == (None, None)
+    md = report_run.markdown(report)
+    assert "Live plans beyond the recorded tree: not measured." in md
+    assert "The loop's own untouched flag: not measured." in md
+    assert "Evaluation repeats in force: not measured." in md
+
+
+def test_the_health_table_reports_the_repeats_in_force_and_their_median_spread(
+    tmp_path, stub_prompts
+):
+    """With k = 3 each program is evaluated three times; an attempt's spread is (max - min) /
+    median of its runs, and each iteration reports the median over its attempts. Every
+    evaluation here is scaled by 1.0, 1.1 and 0.9 in turn, so every spread is 0.2."""
+    workdir = tmp_path / "w"
+    workdir.mkdir()
+    _launch(workdir, eval_repeats=3)
+    task = make_task(str(workdir))
+    factors = itertools.cycle([1.0, 1.1, 0.9])
+
+    def jittered(path):
+        result = task.evaluate(path)
+        return {**result, "combined_score": result["combined_score"] * next(factors)}
+
+    cfg = _config(workdir, iterations=1, versions=1, eval_repeats=3)
+    noisy = dataclasses.replace(task, evaluate=jittered)
+    DreamRSI(cfg, noisy, ScriptedDiscoveryAgent(), ScriptedPolicyAgent()).run()
+    report = report_run.build_report(str(workdir))
+    (row,) = report["iterations"]
+    assert (report["eval_repeats"], row["repeat_spread"]) == (3, pytest.approx(0.2))
+    assert "Evaluation repeats in force: 3." in report_run.markdown(report)
+
+
 def test_a_program_missing_from_disk_cannot_be_checked_for_untouched(tmp_path, stub_prompts):
     """report_run must say what the untouched check covered, never render "0 of N" as if it had
     checked every attempt when the program files themselves are gone (e.g. a stripped copy)."""
@@ -310,6 +395,86 @@ def test_a_program_missing_from_disk_cannot_be_checked_for_untouched(tmp_path, s
     md = report_run.markdown(report)
     assert "Untouched check covers 0 of 4 attempts; 4 had no program file on disk." in md
     assert "0 of 4 attempts left" not in md  # never claim full coverage found nothing untouched
+
+
+def test_a_workdir_without_the_loops_flag_still_lists_what_the_byte_check_finds(
+    tmp_path, stub_prompts
+):
+    """D2a's untouched attempts were found by comparing bytes on a live workdir that predates the
+    loop's flag; with the flag absent, the byte check alone must keep listing them."""
+    workdir = tmp_path / "w"
+    workdir.mkdir()
+    _launch(workdir)
+    cfg = _config(workdir, iterations=1, versions=1)
+    DreamRSI(cfg, make_task(str(workdir)), _NonZeroExit(), ScriptedPolicyAgent()).run()
+    pattern = workdir / "runs" / "iter*" / "tree" / "attempt_*" / "eval" / "score.json"
+    for path in glob.glob(str(pattern)):
+        with open(path) as f:
+            score = json.load(f)
+        del score["untouched"]
+        with open(path, "w") as f:
+            json.dump(score, f)
+    report = report_run.build_report(str(workdir))
+    (case,) = report["untouched"]["cases"]
+    assert (case["cell"], case["loop_untouched"], case["byte_identical"]) == ("b0a1", None, True)
+    assert report["untouched"]["loop_flagged"] is None
+
+
+def test_an_untouched_attempt_whose_program_is_gone_is_not_counted_as_checked(
+    tmp_path, stub_prompts
+):
+    """An untouched attempt is "no_program", yet its program was on disk; once a stripped copy
+    drops it, the byte check has not covered it, even though the loop's flag still lists it."""
+    workdir = tmp_path / "w"
+    workdir.mkdir()
+    _launch(workdir)
+    cfg = _config(workdir, iterations=1, versions=1)
+    DreamRSI(cfg, make_task(str(workdir)), _NonZeroExit(), ScriptedPolicyAgent()).run()
+    for path in glob.glob(str(workdir / "runs" / "iter*" / "tree" / "attempt_*" / PROGRAM)):
+        os.remove(path)
+    report = report_run.build_report(str(workdir))
+    (row,) = report["iterations"]
+    assert row["untouched_unchecked"] == row["attempts"]
+    (case,) = report["untouched"]["cases"]
+    assert (case["cell"], case["loop_untouched"], case["byte_identical"]) == ("b0a1", True, None)
+
+
+def test_repeats_cut_short_by_a_failed_run_are_not_counted_as_evaluation_noise(
+    tmp_path, stub_prompts
+):
+    """repeated() stops at the first run that fails and keeps the scores so far; the gap between
+    a good run and a failed one is a failure, not the spread of a noisy evaluator."""
+    workdir = tmp_path / "w"
+    workdir.mkdir()
+    _launch(workdir, eval_repeats=3)
+    cfg = _config(workdir, iterations=1, versions=1)
+    DreamRSI(cfg, make_task(str(workdir)), ScriptedDiscoveryAgent(), ScriptedPolicyAgent()).run()
+    pattern = workdir / "runs" / "iter0001" / "tree" / "attempt_*" / "eval" / "score.json"
+    for path in glob.glob(str(pattern)):
+        with open(path) as f:
+            score = json.load(f)
+        score.update(error="ValueError: boom", repeat_scores=[1.0, 0.0])
+        with open(path, "w") as f:
+            json.dump(score, f)
+    (row,) = report_run.build_report(str(workdir))["iterations"]
+    assert row["repeat_spread"] is None
+
+
+def test_a_version_whose_live_plan_raised_is_counted_not_read_as_within_support(tmp_path):
+    """online() does not catch plan_grid, so a version whose live plan raises would stop the
+    next iteration once deployed; its episodes must not read as simply within support."""
+    rdir = tmp_path / "r0001_t01_m1"
+    (rdir / "proposal_results").mkdir(parents=True)
+    episode = {"out_of_support": False, "error": None, "beyond_support": False}
+    fallback = {"branch_count": 2, "refine_count": 1, "fallback": True}
+    episodes = [
+        episode | {"live_plan": None, "live_plan_error": "TypeError: '>' not supported"},
+        episode | {"live_plan": fallback, "live_plan_error": None},
+    ]
+    lines = "".join(json.dumps(e) + "\n" for e in episodes)
+    (rdir / "proposal_results" / "policy_execution_traces.jsonl").write_text(lines)
+    version = report_run.analyse_version(str(rdir), {}, (2, 1), set())
+    assert (version["beyond_support"], version["live_plan_errors"]) == (0, 1)
 
 
 def test_copy_evidence_does_not_follow_a_symlink_out_of_the_workdir(tmp_path):

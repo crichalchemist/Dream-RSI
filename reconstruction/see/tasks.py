@@ -23,13 +23,36 @@ SIMPLETES_TASKS = {
 }
 
 
-def simpletes_task(simpletes_dir: str, name: str, workdir: str) -> TaskSpec:
+def link_eigen(task_dir: str, eigen_include: str) -> None:
+    """Point SimpleTES's first Eigen lookup, ``<task dir>/eigen``, at a host Eigen root.
+
+    The Lasso evaluator compiles with ``-I<its own dir>/eigen`` when that directory exists and
+    with ``-I/usr/include/eigen3``, a Linux path, otherwise. ``eigen_include`` is the directory
+    that holds ``Eigen/`` (``/opt/local/include/eigen3`` under MacPorts). A restart finds the
+    link it made; a link to anything else is refused.
+    """
+    target = os.path.abspath(eigen_include)
+    if not os.path.isdir(os.path.join(target, "Eigen")):
+        raise FileNotFoundError(f"{target} has no Eigen/ directory: pass the root that holds it")
+    link = os.path.join(task_dir, "eigen")
+    if os.path.lexists(link):
+        if os.path.realpath(link) != os.path.realpath(target):
+            raise FileExistsError(f"{link} exists and does not point at {target}")
+        return
+    os.symlink(target, link)
+
+
+def simpletes_task(
+    simpletes_dir: str, name: str, workdir: str, *, eigen_include: str | None = None
+) -> TaskSpec:
     src = os.path.join(simpletes_dir, SIMPLETES_TASKS.get(name, name))
     local = os.path.join(workdir, "task", "src")
     if not os.path.exists(local):
-        # SimpleTES's vendored Eigen lacks Eigen/Core; without the copy the Lasso
-        # evaluator falls back to the system headers (libeigen3-dev).
+        # SimpleTES's vendored Eigen lacks Eigen/Core, so it is not copied: the Lasso
+        # evaluator then uses eigen_include when given, else the system headers (libeigen3-dev).
         shutil.copytree(src, local, ignore=shutil.ignore_patterns("eigen", "__pycache__"))
+    if eigen_include is not None:
+        link_eigen(local, eigen_include)
     base = os.path.join(workdir, "task", "baseline")
     os.makedirs(base, exist_ok=True)
     shutil.copy(os.path.join(local, "init_program.py"), os.path.join(base, "init_program.py"))

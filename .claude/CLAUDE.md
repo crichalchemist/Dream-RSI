@@ -28,6 +28,7 @@ python -m pytest -q                   # whole suite, ~14s; exact count pinned in
 python -m pytest -q tests/test_loop.py::test_on_policy_replay_reproduces_the_live_episode
 python -m see demo --workdir /tmp/drsi                                          # whole loop, toy task, ~8s
 python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tmp/sweep
+python scripts/report_run.py --workdir runs/lasso --out /tmp/report   # D2's four questions
 ```
 
 - Without `generated/`, `see demo` and `see/prompts.py` raise `FileNotFoundError`; the test suite
@@ -37,9 +38,32 @@ python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tm
   (langsmith) that crashes collection; if you must run pytest outside the venv, prefix
   `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`.
 - Paper-task scripts need `git clone --depth 1 https://github.com/wq-will/SimpleTES ../SimpleTES`
-  plus g++, OpenMP and system Eigen (`libeigen3-dev`). `scripts/verify_lasso.py` scores Listing 3
+  plus a `g++` with OpenMP first on `PATH` and Eigen 3 (Linux: `libeigen3-dev`; macOS: MacPorts
+  `gcc13` selected with `sudo port select --set gcc mp-gcc13`, and `eigen3` passed as
+  `--eigen-include /opt/local/include/eigen3`). `scripts/verify_lasso.py` scores Listing 3
   with SimpleTES's evaluator; `scripts/run_dream_rsi.py` runs the loop with real coding agents and
-  spends real API budget (~110 discovery calls per round at the paper's default grid).
+  spends real API budget (~110 discovery calls per round at the paper's default grid); each
+  launch appends its caps, agent argv and CLI versions, and host toolchain to
+  `<workdir>/launches.jsonl`.
+
+## Code navigation: Serena first
+
+Serena (MCP server, Python language server) indexes the repository; its paths are relative to the
+repo root (`reconstruction/see/live.py`). Reach for it before Grep or a whole-file Read whenever
+the question is about a symbol:
+
+- what a file defines, or where X is defined: `get_symbols_overview`, then `find_symbol`
+  (`include_body=True` for the code, `depth=1` for a class's methods)
+- who calls X, before changing a signature or anything public in `see/policy/`:
+  `find_referencing_symbols`
+- replacing or adding a function or method: `replace_symbol_body`, `insert_after_symbol`,
+  `insert_before_symbol`
+
+Keep Read/Edit for text that is not a symbol (Markdown, YAML, TOML, `GAPS.md` tables) and Grep for
+strings (error messages, file names, format strings). In Claude Code the tools are deferred: load
+them with ToolSearch (`select:mcp__serena__find_symbol,...`) before the first call, and tell
+subagents working on `see/`, `scripts/` or `tests/` the same. `.serena/` is tool state and is
+gitignored.
 
 ## Architecture
 
@@ -106,3 +130,6 @@ prompts from `generated/`, which is why extraction is a prerequisite.
   into them. After a SIGKILL of the parent, or any signal the entry
   points do not map, which run no cleanup, check for a surviving `see sweep` process first.
 - `*.local.md` files are private maintainer notes and are gitignored.
+- `evidence/` holds committed run evidence written by tools, never an attempt's program
+  (SimpleTES is AGPL): `report_run.py --copy-evidence` copies an allowlist and withholds any
+  file quoting `CPP_CODE`. It is excluded from ruff and the whitespace hooks, kept as written.

@@ -38,12 +38,15 @@ Details: `tools/extract_listings.py`.
   (sum-difference, circle packing n=26, first autocorrelation). The `n_valid`/`n_total`
   fields of Listing 2's `Observation` match this evaluator's output, so Dream-RSI very
   likely wraps SimpleTES evaluators. SimpleTES's vendored Eigen lacks `Eigen/Core` (its
-  `.gitignore` drops it), so compilation needs system Eigen.
+  `.gitignore` drops it), so compilation needs system Eigen or a host Eigen root passed as
+  `--eigen-include` (§3, "Lasso host toolchain").
 - **KernelBench** supplies the four kernel tasks. The paper names "VGG16, LayerNorm, ConvDiv,
   ConvMax" but not their problem ids or levels, and the last two names match several
   KernelBench problems. The GPU model is not stated either.
 - **Gemini CLI** is the discovery agent. Its invocation flags, tools, timeouts and sampling
-  settings are not given.
+  settings are not given. `scripts/run_dream_rsi.py` records each launch's agent argv and CLI
+  version in `<workdir>/launches.jsonl`. The D2a run used the Antigravity CLI instead, because
+  the Gemini CLI refused this account's login (§5, "D2a run").
 
 ## 3. Reconstruction choices (the paper is silent)
 
@@ -79,6 +82,7 @@ Details: `tools/extract_listings.py`.
 | Two objectives, two episode sets | Eq. (1) per episode; Listing 2 sweeps beta | `pareto.reward` is computed from the beta-grid episodes (one per trace per beta) and `eq1.V` from one extra episode per trace at the policy's baked-in default beta, the one a live rollout uses; an error in either set invalidates both (pinned in `test_ledger.py::test_pareto_comes_from_the_beta_grid_and_eq1_from_the_default_beta_episode` and `::test_an_error_in_either_episode_set_invalidates_both_objectives`) | betas and λ as above; the split is fixed in `see/objective.py` (`beta_sweep`) |
 | Trace ceiling | not named | the best successful cell's score, else the baseline; failed and timed-out cells keep their scores in the trace but never raise it; an out-of-support plan is clipped to the trace and scored as the clipped plan, with `out_of_support` reported for information (pinned in `test_ledger.py::test_the_trace_ceiling_counts_only_successful_cells` and `::test_an_out_of_support_plan_is_flagged_and_scored_as_its_clipped_grid`) | fixed in `see/world.py` (`Trace.ceiling`, `ReplayQuestion`); zero-versus-clip is D2 |
 | The floor and π₁ | Sec. 4: π₁ is parallel refine | `policy_dev/history/baseline/` is re-swept on the current pool every `offline()` for reference and is never a candidate; `LoopConfig.initial_policy` is copied to `deployed/iter0001.py` only when the workdir is created, so a resumed run keeps the policy it started with (pinned in `test_ledger.py::test_the_floor_is_reswept_for_reference_and_never_deployed` and `::test_the_initial_policy_seeds_only_a_fresh_workdir`) | `LoopConfig.initial_policy` (no flag); the floor is fixed in `see/loop.py` (`offline`) |
+| Lasso host toolchain | not discussed; SimpleTES's evaluator compiles with a hardcoded `g++ -O3 -march=native -std=c++17`, with `-I<task dir>/eigen` when that directory exists, else `-I/usr/include/eigen3` | the adapter does not copy SimpleTES's vendored `eigen/` (it lacks `Eigen/Core`); `eigen_include` makes `task/src/eigen` a symlink to a host Eigen root, the directory the evaluator tries first, refusing a root without `Eigen/` and an existing link that points elsewhere (a restart reuses its own link); the compiler is whatever `g++` resolves to on `PATH`: on macOS Apple's `g++` is clang without OpenMP, so MacPorts gcc is selected with `port select` (pinned in `test_tasks.py::test_eigen_include_is_where_the_evaluator_looks_first` and `::test_a_restart_reuses_its_eigen_link_and_refuses_a_different_one`) | `simpletes_task(eigen_include=)`; `run_dream_rsi.py --eigen-include`; `verify_lasso.py --eigen-include` (search score only); the compiler: `PATH` |
 
 ## 4. Places where the paper contradicts itself
 
@@ -141,6 +145,81 @@ Gemini-3.1-Pro row (4.0, 1.9, 7.5, 14.0, 11.5) than to its Flash row
 **Evaluation noise.** Re-evaluating an unchanged program moves the Lasso score by about
 2% (0.0288–0.0294). Replay stores one sample per node, so the replay simulator inherits
 that noise without any estimate of it.
+
+**D2a run (2026-09-25).** One real-agent run on the Lasso task on a second machine, Intel(R)
+Core(TM) i7-7700K CPU @ 4.20GHz (8 threads), g++ (MacPorts gcc13 13.4.0_1+stdlib_flag) 13.4.0,
+Eigen 3.4.1, SimpleTES 47d3413da1d8. The Antigravity CLI (`agy`) 1.2.11 with
+`gemini-3.1-pro-high` drove discovery, and Claude CLI 2.1.283 drove policy development. Both
+were isolated from the owner's global CLI configuration. The paper's Gemini CLI refused this
+account's login ("no longer supported for Gemini Code Assist for individuals"). The run took 1
+launch, with a 4 x 3 fallback grid (16 calls), 6 x 4 hard caps (30 calls) and three policy
+versions per iteration. It completed 1 of 2 iterations.
+
+The account's individual Gemini 3.1 Pro quota ran out during iteration 1's last round
+(agy logged HTTP 429 from 18:02). Two of that round's four agents exited with code 3: b1a3 after
+editing its program (the iteration's best cell) and b2a3 before writing one.
+
+Iteration 2, under the deployed version, was stopped during its second round:
+- All four first-round agents exited 3 on the quota.
+- Before the second round, concurrent `agy` calls sharing one home had corrupted the token file
+  at the hourly refresh. The second round's agents could not authenticate and exited 1.
+- No agent in iteration 2 changed its program.
+- Its frozen trace holds 4 probes. The second round's 4 attempts were evaluated on disk but
+  never returned to the policy.
+
+A restart's pre-flight was refused by the same quota. The workdir alone does not show these
+causes: the loop keeps each agent's exit code but not its stderr, so they come from agy's own
+logs, which stay outside the workdir.
+
+The full report and the evidence subset are in `evidence/d2a-lasso/`, and the stopped
+iteration's are in `evidence/d2a-lasso/restart1/`. The workdir archive stays off the repository
+(sha256 `281b49ad4c5c41129e3bb1cd1fe64625fdb1ec99c3baccffa39ea8ea5db3cb2c`).
+
+- Per-round calls:
+  - iteration 1 (the initial policy) planned 4 x 3 without the fallback and spent 16 probes in
+    4 rounds;
+  - the stopped iteration 2 (the deployed version) planned 4 x 4 (20 calls). Its frozen trace
+    holds 4 probes, and 8 attempts were evaluated on disk.
+
+  The caps here are 16 and 30; the paper's are 110 and 640.
+- Out-of-support replay: none of the 3 versions replayed on clipped episodes (12 episodes each).
+  For the deployed version this holds by construction, not by behaviour.
+  - Replay hands `plan_grid` the recorded tree's grid (`trace_branch_count`,
+    `trace_refine_count`, set in `see/pool.py`); a live context leaves both None.
+  - Version m2 clamps its plan to those fields, so every replay episode planned 4 x 3.
+  - Live, in iteration 2, the same version planned 4 x 4, deeper than any recorded tree.
+
+  Measuring out-of-support plans needs a signal that does not depend on those fields.
+- Untouched programs:
+  - 1 of 16 attempts left its resume source byte for byte (iteration 1, b2a3). Its agent exited
+    3 on the quota before writing a program, so the evaluator re-ran its parent's program
+    (`compile_other`, 0 against 0). This agent did not choose to leave the program unchanged, and
+    iteration 1 has no case where one did.
+  - In the stopped iteration, all 8 attempts evaluated on disk did (b0a0–b3a1, all `ok`). Every
+    agent exited non-zero, 3 on the quota and then 1 on auth, and each program is the baseline's.
+    The report counts the 4 in the frozen trace.
+- Empty batches: none among the versions, and none among the live iterations.
+- Health of iteration 1:
+  - 16 attempts and 11 successes; fail classes ok 11, timeout 3, compile_other 2;
+  - 2 agent timeouts, 2 agents that exited non-zero, 0 attempts without a program,
+    0 evaluator crashes;
+  - baseline 0.0134266, best 0.0167488.
+
+  Two of the 11 successes scored 0, with 16 and 14 of 17 instances valid (b0a0, b0a2).
+  SimpleTES reports validity 1.0 and no error for them, so the loop classes them `ok`.
+
+  Version rewards were m0 0.475, m1 0.4529 and m2 0.532062; m2 was deployed.
+- Evaluation noise in the run: the stopped iteration's eight evaluations of the unchanged
+  baseline scored 0.0132689–0.0151303, a 14.0% spread. That runs from 1.2% below to 12.7% above
+  the baseline's own 0.0134266 at run start. Iteration 1's best is 24.7% above that baseline
+  score, but only 10.7% above the highest of those re-evaluations.
+- Smoke test on this host (`host.json`, two runs each), against the Xeon's 2% above:
+
+  | Program | Valid | Geo-mean ms | Spread |
+  |---|---|---|---|
+  | Listing 3 | 17/17, 17/17 | 63.03, 62.36 | 1.1% |
+  | glmnet port | 17/17, 17/17 | 74.24, 70.50 | 5.3% |
+  | SimpleTES best | 17/17, 17/17 | 62.88, 66.39 | 5.6% |
 
 ## 6. Reading the reported results
 

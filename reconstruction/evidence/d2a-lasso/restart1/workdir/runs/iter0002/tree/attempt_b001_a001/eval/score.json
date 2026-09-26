@@ -1,0 +1,134 @@
+{
+ "problems": [
+  {
+   "problem_idx": 0,
+   "sol_time_ms": 19.28366400534287,
+   "max_gap": 8.881784197001252e-16,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 1,
+   "sol_time_ms": 38.81312799057923,
+   "max_gap": 3.1672442446506466e-12,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 2,
+   "sol_time_ms": 86.93336800206453,
+   "max_gap": 4.263256414560601e-14,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 3,
+   "sol_time_ms": 130.47937798546627,
+   "max_gap": 7.105427357601002e-15,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 4,
+   "sol_time_ms": 46.37935300706886,
+   "max_gap": 0.0,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 5,
+   "sol_time_ms": 176.0969839815516,
+   "max_gap": 1.4672707493446069e-12,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 6,
+   "sol_time_ms": 149.32486100587994,
+   "max_gap": 0.0,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 7,
+   "sol_time_ms": 73.78729499760084,
+   "max_gap": 3.33510996597397e-13,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 8,
+   "sol_time_ms": 94.39583600033075,
+   "max_gap": 6.572520305780927e-14,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 9,
+   "sol_time_ms": 169.22483700909652,
+   "max_gap": 4.504840944719035e-12,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 10,
+   "sol_time_ms": 17.722715012496337,
+   "max_gap": 2.7755575615628914e-17,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 11,
+   "sol_time_ms": 25.091632996918634,
+   "max_gap": 6.938893903907228e-18,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 12,
+   "sol_time_ms": 1045.1367020141333,
+   "max_gap": 1.4210854715202004e-14,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 13,
+   "sol_time_ms": 27.230798004893586,
+   "max_gap": 7.442935157087049e-13,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 14,
+   "sol_time_ms": 54.89401600789279,
+   "max_gap": 3.552713678800501e-15,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 15,
+   "sol_time_ms": 50.51678899326362,
+   "max_gap": 3.552713678800501e-15,
+   "valid": true,
+   "error": null
+  },
+  {
+   "problem_idx": 16,
+   "sol_time_ms": 190.57605601847172,
+   "max_gap": 0.0,
+   "valid": true,
+   "error": null
+  }
+ ],
+ "n_valid": 17,
+ "n_total": 17,
+ "geo_mean_sol_ms": 75.3643936931321,
+ "raw_speed_score": 0.013268865454843157,
+ "validity": 1.0,
+ "eval_time": 21.80449104309082,
+ "combined_score": 0.013268865454843157,
+ "fail_class": "ok",
+ "seconds": 143.49160504341125,
+ "agent_returncode": 1,
+ "agent_timed_out": false
+}

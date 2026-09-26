@@ -1,0 +1,141 @@
+{
+ "policy": "OptimalPolicy",
+ "default_beta": 0.6,
+ "n_traces": 1,
+ "valid": true,
+ "errors": [],
+ "pareto": {
+  "reward": 0.45290037273775124,
+  "auc": 0.4989157210258268,
+  "parallel_penalty": 0.46015348288075564,
+  "lambda": 0.1,
+  "frontier": [
+   [
+    0.4375,
+    0.43533144205165375
+   ],
+   [
+    1.0,
+    1.0
+   ]
+  ]
+ },
+ "per_beta": [
+  {
+   "beta": 0.0,
+   "work": 0.4375,
+   "attainment": 0.43533144205165375,
+   "penalty": 0.42857142857142855,
+   "probes": 7.0,
+   "rounds": 3.0,
+   "eq1": 0.014872883790111622
+  },
+  {
+   "beta": 0.1,
+   "work": 0.4375,
+   "attainment": 0.43533144205165375,
+   "penalty": 0.42857142857142855,
+   "probes": 7.0,
+   "rounds": 3.0,
+   "eq1": 0.014872883790111622
+  },
+  {
+   "beta": 0.2,
+   "work": 0.6875,
+   "attainment": 0.43533144205165375,
+   "penalty": 0.45454545454545453,
+   "probes": 11.0,
+   "rounds": 5.0,
+   "eq1": 0.014872883790111622
+  },
+  {
+   "beta": 0.3,
+   "work": 1.0,
+   "attainment": 1.0,
+   "penalty": 0.4375,
+   "probes": 16.0,
+   "rounds": 7.0,
+   "eq1": 0.016748848379834706
+  },
+  {
+   "beta": 0.4,
+   "work": 1.0,
+   "attainment": 1.0,
+   "penalty": 0.4375,
+   "probes": 16.0,
+   "rounds": 7.0,
+   "eq1": 0.016748848379834706
+  },
+  {
+   "beta": 0.5,
+   "work": 1.0,
+   "attainment": 1.0,
+   "penalty": 0.5,
+   "probes": 16.0,
+   "rounds": 8.0,
+   "eq1": 0.016748848379834706
+  },
+  {
+   "beta": 0.6,
+   "work": 1.0,
+   "attainment": 1.0,
+   "penalty": 0.5,
+   "probes": 16.0,
+   "rounds": 8.0,
+   "eq1": 0.016748848379834706
+  },
+  {
+   "beta": 0.7,
+   "work": 1.0,
+   "attainment": 1.0,
+   "penalty": 0.5,
+   "probes": 16.0,
+   "rounds": 8.0,
+   "eq1": 0.016748848379834706
+  },
+  {
+   "beta": 0.8,
+   "work": 1.0,
+   "attainment": 1.0,
+   "penalty": 0.5,
+   "probes": 16.0,
+   "rounds": 8.0,
+   "eq1": 0.016748848379834706
+  },
+  {
+   "beta": 0.9,
+   "work": 1.0,
+   "attainment": 1.0,
+   "penalty": 0.4375,
+   "probes": 16.0,
+   "rounds": 7.0,
+   "eq1": 0.016748848379834706
+  },
+  {
+   "beta": 1.0,
+   "work": 1.0,
+   "attainment": 1.0,
+   "penalty": 0.4375,
+   "probes": 16.0,
+   "rounds": 7.0,
+   "eq1": 0.016748848379834706
+  }
+ ],
+ "eq1": {
+  "beta1": 0.0,
+  "beta2": 0.0,
+  "V": 0.016748848379834706,
+  "per_trace": {
+   "iter0001": 0.016748848379834706
+  }
+ },
+ "default_episode": {
+  "attainment": 1.0,
+  "work": 1.0,
+  "penalty": 0.5
+ },
+ "out_of_support": false,
+ "plan_grid_override": true,
+ "method": "/Users/Shared/dream-rsi-runs/d2a-lasso/policy_dev/history/r0002_t01_m1/method.py",
+ "sha256": "7e144a1700ff146317ba76444d82a31927d8361cdaf9a8cd35def3aab56b3bf8"
+}

@@ -15,7 +15,9 @@ SimpleTES is AGPL-3.0, so it is not vendored: clone it and pass its path.
 
 The evaluator is copied into a temp dir before import because the Eigen tree
 vendored in SimpleTES lacks Eigen/Core (its .gitignore drops it); from the
-temp dir the evaluator falls back to -I/usr/include/eigen3 (libeigen3-dev).
+temp dir the evaluator falls back to -I/usr/include/eigen3 (libeigen3-dev),
+or uses --eigen-include, the directory holding Eigen/ (MacPorts:
+/opt/local/include/eigen3). --eigen-include covers the search score only.
 
 --downstream times held-out datasets of the paper's Fig. 3(a) with
 SimpleTES's own benchmark() routine: DNA and Leukemia from the copies shipped
@@ -36,6 +38,7 @@ import urllib.request
 import numpy as np
 
 from see.loader import load_module_from_path
+from see.tasks import link_eigen
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -52,10 +55,12 @@ PAPER_MS = {
 }
 
 
-def load_evaluator(simpletes_dir, workdir):
+def load_evaluator(simpletes_dir, workdir, eigen_include=None):
     src = os.path.join(simpletes_dir, "datasets", "numerical_tasks", "lasso_path", "evaluator.py")
     dst = os.path.join(workdir, "lasso_evaluator.py")
     shutil.copy(src, dst)
+    if eigen_include is not None:
+        link_eigen(workdir, eigen_include)  # the evaluator looks in its own directory first
     # Its default memory cap is RAM/256 per child, too small to import sklearn.
     os.environ.setdefault("EVALUATOR_CONCURRENT_PROCESSES", "1")
     return load_module_from_path("lasso_evaluator", dst)
@@ -142,6 +147,11 @@ def main(argv=None):
     )
     ap.add_argument("--gisette", action="store_true", help="with --downstream, add Gisette")
     ap.add_argument("--json", help="write the per-problem results here")
+    ap.add_argument(
+        "--eigen-include",
+        help="directory holding Eigen/, e.g. /opt/local/include/eigen3 "
+        "(default: the evaluator's /usr/include/eigen3)",
+    )
     args = ap.parse_args(argv)
 
     dream = os.path.join(ROOT, "generated", "lasso_path_dream_rsi.py")
@@ -166,7 +176,7 @@ def main(argv=None):
                 json.dump(rows, f, indent=1, default=float)
         return
     with tempfile.TemporaryDirectory() as workdir:
-        ev = load_evaluator(args.simpletes, workdir)
+        ev = load_evaluator(args.simpletes, workdir, args.eigen_include)
         labels = [f"n{n}_p{p}_{g}" for (n, p, g) in ev.PROBLEM_SIZES]
         results = {}
         for name, path in programs.items():

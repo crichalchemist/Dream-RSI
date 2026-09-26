@@ -18,7 +18,7 @@ that file before trusting any number this code produces.
 | Prompts (Listings 1, 2) and discovered Lasso solver (Listing 3) | appendix | regenerated from the PDF, verbatim |
 | Lasso and math tasks | SimpleTES | adapter (`see/tasks.py`) |
 | KernelBench tasks | KernelBench | no adapter |
-| Runs with real LLM agents | Gemini CLI or other | wired (`scripts/run_dream_rsi.py`), not run here |
+| Runs with real LLM agents | Gemini CLI or other | wired (`scripts/run_dream_rsi.py`); run once on Lasso (track D2a: Antigravity CLI discovery with Gemini 3.1 Pro, Claude CLI policy development, 1 of 2 iterations; `evidence/d2a-lasso/report.md`) |
 
 The core package is standard-library Python; `pyproject.toml` extras cover the tools
 (`extract`), the SimpleTES scripts (`lasso`) and the quality gate (`dev`). The package is
@@ -37,17 +37,21 @@ python -m pytest -q                       # whole suite; exact count pinned in .
 python -m see demo --workdir /tmp/drsi    # whole loop on a toy task, scripted agents
 ```
 
-Check the paper's Lasso solver against SimpleTES's own evaluator (needs g++,
-OpenMP and `libeigen3-dev`):
+Check the paper's Lasso solver against SimpleTES's own evaluator. It needs a `g++` with
+OpenMP first on `PATH` and Eigen 3: on Linux, `g++` and `libeigen3-dev`; on macOS, where
+Apple's `g++` is clang without OpenMP, MacPorts `gcc13` (`sudo port select --set gcc mp-gcc13`)
+and `eigen3`, passed as `--eigen-include /opt/local/include/eigen3` (the directory holding
+`Eigen/`; it covers the search score, not `--downstream`):
 
 ```bash
 git clone --depth 1 https://github.com/wq-will/SimpleTES ../SimpleTES
-python scripts/verify_lasso.py --simpletes ../SimpleTES --repeats 2
+python scripts/verify_lasso.py --simpletes ../SimpleTES --repeats 2  # macOS: --eigen-include DIR
 python scripts/verify_lasso.py --simpletes ../SimpleTES --downstream --gisette
 ```
 
 Run the loop on a paper task with real coding agents. This spends real API
-budget: about 110 discovery calls per round at the paper's 3.1-Pro setting.
+budget: about 110 discovery calls per round at the paper's 3.1-Pro setting. On macOS add
+`--eigen-include` as above.
 
 ```bash
 python scripts/run_dream_rsi.py --simpletes ../SimpleTES --task lasso_path \
@@ -58,6 +62,13 @@ Replay-score any policy file over an existing trace pool:
 
 ```bash
 python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tmp/sweep
+```
+
+Turn a run's workdir into counts for the four questions track D2 asks (per-round calls,
+out-of-support replay, untouched programs, empty batches), as `report.md` and `report.json`:
+
+```bash
+python scripts/report_run.py --workdir runs/lasso --out /tmp/report
 ```
 
 ## Layout
@@ -74,7 +85,8 @@ see/loop.py                 DreamRSI outer loop
 see/pool.py, loader.py      trace pool and policy-file loading
 see/tasks.py                SimpleTES task adapter
 see/toy.py, synthetic.py    toy task, scripted agents, synthetic trees (tests/demo only)
-scripts/                    verify_lasso.py, run_dream_rsi.py
+scripts/                    verify_lasso.py, run_dream_rsi.py, report_run.py
+evidence/                   committed run evidence: reports, traces, scores (no attempt programs)
 ```
 
 `generated/` is not committed. It holds the paper's own text (© 2026 Google),

@@ -1,0 +1,21 @@
+Problem 0: sol_time_ms is not finite. Error: TimeoutExpired: Command '['/var/folders/f2/9vss9brn1cg53vqt3d_zjjzr0000gn/T/lasso_path_cpp_cache/lasso_solver_da5e86cacec0']' timed out after 8 seconds
+Traceback (most recent call last):
+  File "/var/folders/f2/9vss9brn1cg53vqt3d_zjjzr0000gn/T/tmp5yq9i6gi.py", line 165, in <module>
+    coef_path = _run_binary(binary_path, X, y, alphas_sk, CALL_TIMEOUT)
+  File "/var/folders/f2/9vss9brn1cg53vqt3d_zjjzr0000gn/T/tmp5yq9i6gi.py", line 129, in _run_binary
+    proc = subprocess.run([binary_path], input=payload, capture_output=True,
+                          timeout=call_timeout)
+  File "/opt/local/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py", line 556, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/local/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py", line 1222, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/local/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py", line 2155, in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/local/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py", line 1269, in _check_timeout
+    raise TimeoutExpired(
+    ...<2 lines>...
+            stderr=b''.join(stderr_seq) if stderr_seq else None)
+subprocess.TimeoutExpired: Command '['/var/folders/f2/9vss9brn1cg53vqt3d_zjjzr0000gn/T/lasso_path_cpp_cache/lasso_solver_da5e86cacec0']' timed out after 8 seconds

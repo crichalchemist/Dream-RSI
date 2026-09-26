@@ -117,6 +117,14 @@ class Episode:
     live_plan_error: str | None
 
 
+def _live_grid(policy, context: GridPlanningContext) -> dict:
+    """The grid online() runs for this plan: a rejected or absent plan becomes the fallback."""
+    asked = validate_plan(policy.plan_grid(context), context)
+    b = asked.branch_count if asked else context.fallback_branch_count
+    r = asked.refine_count if asked else context.fallback_refine_count
+    return {"branch_count": b, "refine_count": r, "fallback": asked is None}
+
+
 def run_episode(
     policy,
     trace: Trace,
@@ -175,14 +183,29 @@ def run_episode(
     if use_plan:
         live = dataclasses.replace(context, trace_branch_count=None, trace_refine_count=None)
         try:
-            asked = validate_plan(policy.plan_grid(live), live)
-            b = asked.branch_count if asked else live.fallback_branch_count
-            r = asked.refine_count if asked else live.fallback_refine_count
-            episode.live_plan = {"branch_count": b, "refine_count": r, "fallback": asked is None}
+            episode.live_plan = _live_grid(policy, live)
+            b, r = episode.live_plan["branch_count"], episode.live_plan["refine_count"]
             episode.beyond_support = b > trace.grid[0] or r > trace.grid[1]
         except Exception:
             episode.live_plan_error = traceback.format_exc(limit=4)
     return episode
+
+
+def next_live_plan(
+    policy_cls: Callable, context: GridPlanningContext, grids: Sequence[tuple]
+) -> dict:
+    """The grid online() would run next with this version deployed (GAPS §3, "Next live plan").
+
+    ``context`` is ``see.pool.next_context``'s; ``grids`` are the recorded trees' (branch_count,
+    refine_count). Reported only: it changes no score and no selection.
+    """
+    try:
+        plan = _live_grid(policy_cls(None), context)  # baked-in default beta, as online() plans
+    except Exception:
+        return {"error": traceback.format_exc(limit=4)}
+    b, r = plan["branch_count"], plan["refine_count"]
+    plan["beyond_support"] = not any(b <= tb and r <= tr for tb, tr in grids)
+    return plan
 
 
 def _mean(xs):

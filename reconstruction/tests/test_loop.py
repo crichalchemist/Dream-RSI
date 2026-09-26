@@ -10,12 +10,13 @@ import time
 import pytest
 
 import see.live
+import see.loop
 import see.prompts
 from see.live import LiveQuestion, repeated
 from see.loader import load_policy
 from see.loop import DreamRSI, LoopConfig, archive_name, install_signal_handlers
 from see.objective import run_episode
-from see.pool import context_factory, load_pool
+from see.pool import context_factory, load_pool, next_context
 from see.toy import PROGRAM, ScriptedDiscoveryAgent, ScriptedPolicyAgent, evaluate, make_task
 from see.world import Trace
 
@@ -92,6 +93,42 @@ def test_plan_contexts_only_see_earlier_cycles(finished_loop):
     context_for = context_factory(pool, (4, 5), (8, 8))
     for i, (trace, _) in enumerate(pool):
         assert [m["iteration"] for m in context_for(trace).history] == list(range(1, i + 1))
+
+
+def test_the_next_context_is_the_one_online_plans_with(finished_loop):
+    """see sweep's next live plan is made with DreamRSI._context over every manifest in the pool."""
+    c = finished_loop.c
+    pool = load_pool(os.path.join(finished_loop.w, "trace_pool"))
+    context = next_context(pool, c.fallback_grid, c.hard_max_grid, c.max_parallelism)
+    assert context == finished_loop._context(finished_loop.manifests())
+
+
+def test_the_deployed_versions_next_live_plan_is_the_grid_online_runs_next(finished_loop):
+    """Each version's sweep records the plan it would run in the next live cycle; for the version
+    that ran iteration t + 1, the sweep made at iteration t names that cycle's grid exactly
+    (GAPS §3, "Next live plan")."""
+    log = finished_loop.state["log"]
+    for live in (entry["live"] for entry in log[1:]):
+        path = os.path.join(finished_loop.w, "policy_dev", "history", live["policy_round"])
+        with open(os.path.join(path, "proposal_results", "beta_sweep.json")) as f:
+            planned = json.load(f)["next_live_plan"]
+        grid = {k: planned[k] for k in ("branch_count", "refine_count")}
+        assert (grid, planned["fallback"]) == (live["effective_grid"], live["used_fallback"])
+
+
+def test_the_loop_sweeps_with_its_own_parallelism(finished_loop, tmp_path, monkeypatch):
+    """online() plans with LoopConfig.max_parallelism, so the loop hands the sweep that value
+    rather than leaving it to the newest recorded tree's."""
+    argv, popen = [], subprocess.Popen
+
+    def spy(cmd, *args, **kwargs):
+        argv.append(cmd)
+        return popen(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(see.loop.subprocess, "Popen", spy)
+    finished_loop._sweep(finished_loop.state["deployed"], str(tmp_path))
+    (cmd,) = argv
+    assert cmd[cmd.index("--max-parallelism") + 1] == str(finished_loop.c.max_parallelism)
 
 
 def test_agent_crash_is_a_failed_attempt_not_a_failed_episode(tmp_path, stub_prompts):

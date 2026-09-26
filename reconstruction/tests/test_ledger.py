@@ -9,12 +9,14 @@ import os
 
 import pytest
 
+from see.__main__ import main
 from see.live import LiveQuestion
 from see.loop import BASELINE_POLICY, DreamRSI, LoopConfig
-from see.objective import attainment, beta_sweep, eq1_value, run_episode
+from see.objective import attainment, beta_sweep, eq1_value, next_live_plan, run_episode
 from see.policies.parallel_refine import ParallelRefine
 from see.policies.portfolio import OptimalPolicy
 from see.policy.api import GridPlan, GridPlanningContext
+from see.pool import context_factory, next_context
 from see.synthetic import synthetic_trace
 from see.toy import PORTFOLIO, ScriptedDiscoveryAgent, ScriptedPolicyAgent, make_task
 from see.world import Cell, Trace
@@ -241,6 +243,170 @@ def test_a_policy_that_probes_its_kept_question_from_plan_grid_cannot_change_its
     fields = ("probes", "best", "rounds", "effective_rounds", "attainment", "penalty", "eq1", "log")
     assert [getattr(kept, f) for f in fields] == [getattr(quiet, f) for f in fields]
     assert probing.kept.budget_spent > kept.probes  # the extra call did probe
+
+
+class _WidensWithHistory(ParallelRefine):
+    """One branch more for every recorded live cycle: a plan only history makes wider."""
+
+    def plan_grid(self, context):
+        return GridPlan(2 + len(context.history), 2, reason="one branch per recorded cycle")
+
+
+def test_a_plan_that_widens_with_history_is_flagged_only_as_the_next_live_plan():
+    """Replay gives each tree only the cycles before it, so this policy plans every recorded
+    tree's own grid there and no episode is beyond support. online() plans with every cycle, one
+    branch wider than any tree, and only the next live plan sees that (GAPS §3, "Next live
+    plan")."""
+    pool = [
+        (synthetic_trace(i, branches=2 + i, refine=2, max_parallelism=4), {"iteration": i + 1})
+        for i in range(2)
+    ]
+    report, _ = beta_sweep(
+        _WidensWithHistory,
+        [t for t, _ in pool],
+        context_for=context_factory(pool, (2, 2), (8, 8)),
+        betas=(0.5,),
+    )
+    assert (report["out_of_support"], report["beyond_support"], report["valid"]) == (
+        False,
+        False,
+        True,
+    )
+    context = next_context(pool, (2, 2), (8, 8), 4)
+    assert next_live_plan(_WidensWithHistory, context, [t.grid for t, _ in pool]) == {
+        "branch_count": 4,
+        "refine_count": 2,
+        "fallback": False,
+        "beyond_support": True,
+    }
+
+
+class _Plans5x5(ParallelRefine):
+    def plan_grid(self, context):
+        return GridPlan(5, 5, reason="five by five")
+
+
+def test_a_next_live_plan_is_covered_only_by_one_tree_at_least_as_wide_and_deep():
+    """A plan inside an older, larger tree is within support however small the newest tree is;
+    two trees that cover its width and its depth only between them do not cover it."""
+    context = GridPlanningContext((), 2, 2, 8, 8, 4)
+    beyond = [
+        next_live_plan(_Plans5x5, context, grids)["beyond_support"]
+        for grids in ([(6, 6), (2, 2)], [(5, 5)], [(6, 2), (2, 6)])
+    ]
+    assert beyond == [False, False, True]
+
+
+class _RejectedAtItsDefault(_DefaultBeta045):
+    """Plans past the hard maximum at its baked-in default beta and 3 x 2 at any other."""
+
+    def plan_grid(self, context):
+        if self.beta == 0.45:
+            return GridPlan(9, 9, reason="past the caps")
+        return GridPlan(3, 2, reason="a swept beta")
+
+
+def test_the_next_live_plan_is_made_at_the_default_beta_and_falls_back_as_online_does():
+    """online() plans with a fresh instance at the baked-in default beta and runs the fallback
+    grid when validate_plan rejects the plan; the next live plan does the same."""
+    context = GridPlanningContext((), 2, 1, 8, 8, 4)
+    assert next_live_plan(_RejectedAtItsDefault, context, [(4, 4)]) == {
+        "branch_count": 2,
+        "refine_count": 1,
+        "fallback": True,
+        "beyond_support": False,
+    }
+
+
+D2A = os.path.join(os.path.dirname(__file__), "..", "evidence", "d2a-lasso", "workdir")
+D2A_M2 = os.path.join(D2A, "policy_dev", "history", "r0003_t01_m2")
+D2A_CAPS = ("--fallback", "4", "3", "--hard-max", "6", "4")  # launches.jsonl's config
+
+
+def _sweep_d2a(method: str, out, *extra: str) -> dict:
+    pool = os.path.join(D2A, "trace_pool")
+    main(["sweep", "--method", method, "--pool", pool, "--out", str(out), *D2A_CAPS, *extra])
+    with open(os.path.join(out, "beta_sweep.json")) as f:
+        return json.load(f)
+
+
+def test_d2as_deployed_version_plans_a_next_cycle_its_one_tree_does_not_cover(tmp_path):
+    """D2a deployed m2, and its stopped iteration 2 planned 4 x 4 over a 4 x 3 tree. Replay gives
+    that one tree no history, so no m2 episode is beyond support; the next live plan, made with
+    iteration 1's manifest, is 4 x 4 and flagged, and the reward is the one D2a recorded (GAPS §3,
+    "Next live plan")."""
+    report = _sweep_d2a(os.path.join(D2A_M2, "method.py"), tmp_path)
+    with open(os.path.join(D2A_M2, "proposal_results", "beta_sweep.json")) as f:
+        recorded = json.load(f)
+    assert report["next_live_plan"] == {
+        "branch_count": 4,
+        "refine_count": 4,
+        "fallback": False,
+        "beyond_support": True,
+    }
+    assert (report["beyond_support"], report["valid"]) == (False, True)
+    assert report["pareto"]["reward"] == recorded["pareto"]["reward"]
+
+
+RAISES_WITH_HISTORY = """
+from see.policies.parallel_refine import ParallelRefine
+
+NAME = "RaisesWithHistory"
+
+
+class RaisesWithHistory(ParallelRefine):
+    def plan_grid(self, context):
+        if context.history:
+            raise RuntimeError("no plan with history")
+        return super().plan_grid(context)
+"""
+
+PARALLEL_REFINE = """
+from see.policies.parallel_refine import ParallelRefine
+
+NAME = "ParallelRefine"
+"""
+
+
+def test_a_next_live_plan_that_raises_is_recorded_and_the_sweep_scores_as_without_it(tmp_path):
+    """online() would stop on a plan_grid that raises with the full history; the sweep records
+    the error as the version's next live plan and scores the version exactly as its twin without
+    the raise, since the measure is reported and never selects."""
+    for name, source in (("raises", RAISES_WITH_HISTORY), ("twin", PARALLEL_REFINE)):
+        (tmp_path / f"{name}.py").write_text(source)
+    raises = _sweep_d2a(str(tmp_path / "raises.py"), tmp_path / "raises")
+    twin = _sweep_d2a(str(tmp_path / "twin.py"), tmp_path / "twin")
+    assert "RuntimeError: no plan with history" in raises["next_live_plan"]["error"]
+    assert "error" not in twin["next_live_plan"]
+    assert (raises["valid"], raises["errors"], raises["pareto"]) == (
+        twin["valid"],
+        twin["errors"],
+        twin["pareto"],
+    )
+    assert raises["valid"]
+
+
+PLANS_ITS_PARALLELISM = """
+from see.policies.parallel_refine import ParallelRefine
+from see.policy.api import GridPlan
+
+NAME = "PlansItsParallelism"
+
+
+class PlansItsParallelism(ParallelRefine):
+    def plan_grid(self, context):
+        return GridPlan(context.max_parallelism, 1, reason="one branch per worker")
+"""
+
+
+def test_the_next_live_plan_uses_the_given_parallelism_else_the_newest_trees(tmp_path):
+    """online() plans with LoopConfig.max_parallelism, which the loop's sweep passes; a sweep run
+    by hand without it falls back to the newest recorded tree's (4 in D2a's pool)."""
+    method = tmp_path / "method.py"
+    method.write_text(PLANS_ITS_PARALLELISM)
+    default = _sweep_d2a(str(method), tmp_path / "default")["next_live_plan"]
+    given = _sweep_d2a(str(method), tmp_path / "given", "--max-parallelism", "2")["next_live_plan"]
+    assert (default["branch_count"], given["branch_count"]) == (4, 2)
 
 
 def test_the_floor_is_reswept_for_reference_and_never_deployed(tmp_path, stub_prompts):

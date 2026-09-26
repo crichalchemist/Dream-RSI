@@ -42,3 +42,13 @@ def context_factory(pool: list, fallback: tuple, hard_max: tuple):
         )
 
     return context_for
+
+
+def next_context(
+    pool: list, fallback: tuple, hard_max: tuple, max_parallelism: int
+) -> GridPlanningContext:
+    """The context online() plans the next live cycle with: every manifest, no trace fields."""
+    history = tuple(m for _, m in pool if m is not None)
+    return GridPlanningContext(
+        history, fallback[0], fallback[1], hard_max[0], hard_max[1], max_parallelism
+    )

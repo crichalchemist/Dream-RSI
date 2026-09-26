@@ -11,7 +11,7 @@ import pytest
 
 import see.live
 import see.prompts
-from see.live import LiveQuestion
+from see.live import LiveQuestion, repeated
 from see.loader import load_policy
 from see.loop import DreamRSI, LoopConfig, archive_name, install_signal_handlers
 from see.objective import run_episode
@@ -267,6 +267,70 @@ def test_score_json_keeps_the_agents_stderr_tail(tmp_path, stub_prompts):
     assert (score["agent_returncode"], score["agent_stderr"]) == (3, "HTTP 429: quota exhausted")
     assert score["untouched"] is False  # recorded either way, so a reader can tell it was checked
     assert "the reply" not in json.dumps(score)  # stdout can quote the program: never kept
+
+
+def test_repeats_score_the_median_run_and_stop_at_the_first_error(tmp_path):
+    """D2a's eight evaluations of one unchanged program spread 14%, about the size of the
+    improvement. With k repeats a program scores its median run; a run that fails ends the repeats
+    and is returned as it is, so a failure is never averaged away."""
+    runs = iter(
+        [
+            {"combined_score": 0.5, "run": 1},
+            {"combined_score": 0.3, "run": 2},
+            {"combined_score": 0.1, "run": 3},
+            {"combined_score": 0.4, "run": 4},
+            {"combined_score": 0.2, "run": 5},
+            {"combined_score": 0.4, "run": 6},
+            {"combined_score": 0.0, "error": "ValueError: boom", "run": 7},
+            {"combined_score": 0.9, "run": 8},
+        ]
+    )
+    calls = []
+
+    def evaluate(path):
+        calls.append(path)
+        return next(runs)
+
+    # the median, 0.3, is not the first, last or middle run submitted, nor sorted(...)[1]
+    five = repeated(dataclasses.replace(make_task(str(tmp_path)), evaluate=evaluate), 5)
+    assert five.evaluate("p") == {
+        "combined_score": 0.3,
+        "run": 2,
+        "repeat_scores": [0.5, 0.3, 0.1, 0.4, 0.2],
+    }
+    assert five.evaluate("p") == {
+        "combined_score": 0.0,
+        "error": "ValueError: boom",
+        "run": 7,
+        "repeat_scores": [0.4, 0.0],
+    }
+    assert len(calls) == 7  # the eighth run never happened
+
+
+def test_an_even_zero_or_negative_repeat_count_is_refused_when_the_config_is_built(tmp_path):
+    for k in (0, 2, -1):
+        with pytest.raises(ValueError, match="not an odd count of at least 1"):
+            LoopConfig(workdir=str(tmp_path), eval_repeats=k)
+
+
+def test_the_baseline_is_scored_with_the_same_repeats_as_the_attempts(tmp_path, stub_prompts):
+    """Every improvement is measured against the baseline, so it is scored the way attempts are."""
+    task, calls = _counting(make_task(str(tmp_path)))
+    work = tmp_path / "w"
+    cfg = LoopConfig(
+        workdir=str(work),
+        max_parallelism=1,
+        fallback_grid=(1, 0),
+        hard_max_grid=(1, 0),
+        eval_repeats=3,
+    )
+    DreamRSI(cfg, task, ScriptedDiscoveryAgent(), ScriptedPolicyAgent()).online(1)
+    with open(work / "baseline_eval.json") as f:
+        assert len(json.load(f)["repeat_scores"]) == 3
+    node = work / "runs" / "iter0001" / "tree" / "attempt_b000_a000"
+    with open(node / "eval" / "score.json") as f:
+        assert len(json.load(f)["repeat_scores"]) == 3
+    assert len(calls) == 6  # three for the baseline, three for the one attempt
 
 
 class _Interrupted(BaseException):

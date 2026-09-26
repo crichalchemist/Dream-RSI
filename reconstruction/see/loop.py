@@ -32,7 +32,7 @@ import sys
 import time
 from collections.abc import Callable
 
-from see.live import LiveQuestion, TaskSpec, kill_process_group, oriented_score
+from see.live import LiveQuestion, TaskSpec, kill_process_group, oriented_score, repeated
 from see.loader import load_policy
 from see.objective import DEFAULT_BETAS, DEFAULT_LAMBDA, OBJECTIVES, score_of, validate_plan
 from see.policy.api import GridPlanningContext
@@ -81,10 +81,14 @@ class LoopConfig:
     kill_grace: float = 5.0  # seconds between SIGTERM and SIGKILL for the sweep subprocess
     initial_policy: str = BASELINE_POLICY  # pi_1: the paper starts from parallel refine
     serialize_eval: bool = True
+    eval_repeats: int = 1  # evaluations per program, median kept; 1 is the paper's single one
 
     def __post_init__(self):
         if self.objective not in OBJECTIVES:
             raise ValueError(f"objective {self.objective!r} is not one of {OBJECTIVES}")
+        k = self.eval_repeats
+        if not (isinstance(k, int) and k >= 1 and k % 2 == 1):  # odd: the median is one real run
+            raise ValueError(f"eval_repeats {k!r} is not an odd count of at least 1")
 
 
 class DreamRSI:
@@ -97,6 +101,8 @@ class DreamRSI:
         directions: Callable[[int], str] | None = None,
     ):
         self.c, self.task = config, task
+        if config.eval_repeats > 1:  # the baseline and every attempt are scored the same way
+            self.task = repeated(task, config.eval_repeats)
         self.discovery_agent, self.policy_agent = discovery_agent, policy_agent
         self.directions = directions
         self.w = os.path.abspath(config.workdir)

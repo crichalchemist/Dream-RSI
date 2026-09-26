@@ -51,6 +51,16 @@ def test_each_launch_records_the_caps_and_program_file_the_report_reads(tmp_path
     assert r["agents"]["discovery"]["version"].startswith("Python 3")
 
 
+def test_the_launch_record_carries_eval_repeats(tmp_path):
+    """The report reads the repeats in force from the last launch; the default is the paper's
+    single evaluation."""
+    assert _record(tmp_path)["config"]["eval_repeats"] == 1
+    a = runner.build_parser().parse_args([*ARGS, "--eval-repeats", "3"])
+    task = TaskSpec("lasso_path", str(tmp_path), "init_program.py", "p.txt", lambda p: {})
+    agent = CommandAgent(["python3", "-c", "{prompt}"])
+    assert runner.launch_record(a, ARGS, task, agent, agent)["config"]["eval_repeats"] == 3
+
+
 def test_an_env_wrapped_agent_reports_the_version_of_the_cli_it_wraps():
     """An isolated agent's argv starts with ``env HOME=...``: the version is the CLI's."""
     version = runner.cli_version(["env", "HOME=/nonexistent", "python3", "-c", "{prompt}"])

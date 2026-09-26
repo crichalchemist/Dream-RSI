@@ -205,6 +205,28 @@ class CommandAgent:
                 pipe.close()
 
 
+def repeated(task: TaskSpec, k: int) -> TaskSpec:
+    """``task`` with an evaluator that runs up to ``k`` times (odd) and keeps the median run.
+
+    The first run that reports an ``error`` is returned as it is, so a failure is never averaged
+    away; otherwise the run with the median ``combined_score`` is. Either way ``repeat_scores``
+    lists the scores of the runs made, in order. With ``k`` odd the median is one real run,
+    whatever the task's direction.
+    """
+    inner = task.evaluate
+
+    def evaluate(path: str) -> dict:
+        runs = []
+        for _ in range(k):
+            runs.append(dict(inner(path)))
+            if runs[-1].get("error") is not None:
+                return {**runs[-1], "repeat_scores": [r["combined_score"] for r in runs]}
+        middle = sorted(runs, key=lambda r: r["combined_score"])[k // 2]
+        return {**middle, "repeat_scores": [r["combined_score"] for r in runs]}
+
+    return dataclasses.replace(task, evaluate=evaluate)
+
+
 def _sha256(path: str) -> str | None:
     """The file's digest, or None when it cannot be read: the evaluator then judges it."""
     try:

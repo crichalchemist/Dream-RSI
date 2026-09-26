@@ -112,6 +112,9 @@ class Episode:
     out_of_support: bool
     error: str | None
     log: list
+    live_plan: dict | None  # the grid the policy would run live, trace fields cleared
+    beyond_support: bool  # that grid is wider or deeper than the recorded tree
+    live_plan_error: str | None
 
 
 def run_episode(
@@ -146,6 +149,17 @@ def run_episode(
         error = traceback.format_exc(limit=4)
         if q is None:
             q = ReplayQuestion(trace)
+    live_plan, beyond_support, live_plan_error = None, False, None
+    if use_plan:  # informational, after the episode is scored: what online() would run
+        live = dataclasses.replace(context, trace_branch_count=None, trace_refine_count=None)
+        try:
+            asked = validate_plan(policy.plan_grid(live), live)
+            b = asked.branch_count if asked else live.fallback_branch_count
+            r = asked.refine_count if asked else live.fallback_refine_count
+            live_plan = {"branch_count": b, "refine_count": r, "fallback": asked is None}
+            beyond_support = b > trace.grid[0] or r > trace.grid[1]
+        except Exception:
+            live_plan_error = traceback.format_exc(limit=4)
     probes = q.budget_spent
     return Episode(
         trace_id=trace.trace_id,
@@ -162,6 +176,9 @@ def run_episode(
         out_of_support=q.out_of_support,
         error=error,
         log=q.episode,
+        live_plan=live_plan,
+        beyond_support=beyond_support,
+        live_plan_error=live_plan_error,
     )
 
 
@@ -244,6 +261,7 @@ def beta_sweep(
             "penalty": _mean(e.penalty for e in default_eps),
         },
         "out_of_support": any(e.out_of_support for e in executions),
+        "beyond_support": any(e.beyond_support for e in executions),
     }
     return report, [dataclasses.asdict(e) for e in executions]
 

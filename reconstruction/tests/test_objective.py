@@ -149,7 +149,9 @@ def test_rejected_plan_replays_on_the_fallback_grid_not_the_whole_trace():
     probed = [trace.cells[cid] for step in rejected.log for cid in step["batch"]]
     assert probed, "the fallback grid holds recorded cells, so the episode must probe some"
     assert [c.id for c in probed if c.branch >= 2 or c.attempt > 2] == []
-    assert rejected == dataclasses.replace(explicit, plan=None)
+    # rejected live too, so its live plan is the same fallback grid, marked as the fallback
+    live = {"branch_count": 2, "refine_count": 2, "fallback": True}
+    assert rejected == dataclasses.replace(explicit, plan=None, live_plan=live)
 
 
 def test_default_hard_caps_admit_no_more_calls_than_the_paper():

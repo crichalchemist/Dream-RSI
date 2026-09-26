@@ -139,6 +139,75 @@ def test_an_out_of_support_plan_is_flagged_and_scored_as_its_clipped_grid():
     assert report["out_of_support"] is True and report["valid"]
 
 
+def _support_context() -> GridPlanningContext:
+    """Live caps of 8 x 8 over a recorded 5 x 6 tree, as the loop's sweep passes them."""
+    return GridPlanningContext(
+        history=(),
+        fallback_branch_count=5,
+        fallback_refine_count=6,
+        hard_max_branch_count=8,
+        hard_max_refine_count=8,
+        max_parallelism=5,
+        trace_branch_count=5,
+        trace_refine_count=6,
+    )
+
+
+def test_a_policy_that_clamps_in_replay_but_plans_wider_live_is_flagged_with_its_reward_unchanged():
+    """D2a's deployed version clamped its plan to the replay-only trace fields, so none of its
+    episodes was out of support, while live it planned deeper than any recorded tree. Each episode
+    also records the plan the policy makes with those fields cleared, as online() gives it; the
+    flag never changes what the episode scores."""
+    trace = synthetic_trace(0, branches=5, refine=6, max_parallelism=5)
+    context = _support_context()
+
+    class Clamps(ParallelRefine):
+        def plan_grid(self, context):
+            w, r = context.trace_branch_count, context.trace_refine_count
+            if w is None or r is None:  # live: no recorded tree to stay inside
+                return GridPlan(8, 8, reason="as wide and deep as the caps allow")
+            return GridPlan(w, r, reason="clamped to the recorded tree")
+
+    class Clipped(ParallelRefine):
+        def plan_grid(self, context):
+            return GridPlan(5, 6, reason="the tree's own grid")
+
+    clamps = run_episode(Clamps(None), trace, context, record=True)
+    clipped = run_episode(Clipped(None), trace, context, record=True)
+    assert not clamps.out_of_support and (clamps.beyond_support, clipped.beyond_support) == (
+        True,
+        False,
+    )
+    assert clamps.live_plan == {"branch_count": 8, "refine_count": 8, "fallback": False}
+    assert (clamps.probes, clamps.best, clamps.attainment, clamps.log) == (
+        clipped.probes,
+        clipped.best,
+        clipped.attainment,
+        clipped.log,
+    )
+    report, _ = beta_sweep(Clamps, [trace], context_for=lambda t: context, betas=(0.5,))
+    assert (report["out_of_support"], report["beyond_support"], report["valid"]) == (
+        False,
+        True,
+        True,
+    )
+
+
+def test_a_live_plan_that_raises_is_recorded_not_an_episode_error():
+    """The extra plan_grid call runs after the replay episode is scored and cannot fail it."""
+    trace = synthetic_trace(0, branches=5, refine=6, max_parallelism=5)
+
+    class RaisesLive(ParallelRefine):
+        def plan_grid(self, context):
+            if context.trace_branch_count is None:
+                raise RuntimeError("no support fields")
+            return GridPlan(5, 6, reason="the tree's own grid")
+
+    episode = run_episode(RaisesLive(None), trace, _support_context())
+    assert (episode.error, episode.live_plan, episode.beyond_support) == (None, None, False)
+    assert "RuntimeError: no support fields" in (episode.live_plan_error or "")
+
+
 def test_the_floor_is_reswept_for_reference_and_never_deployed(tmp_path, stub_prompts):
     """policy_dev/history/baseline/ is scored on the current pool every offline phase, but only
     the deployed policy and the agent's revisions are candidates (GAPS §3)."""

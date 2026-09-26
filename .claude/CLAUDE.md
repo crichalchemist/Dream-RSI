@@ -88,9 +88,10 @@ provides `Trace` (the frozen tree: root plus disjoint branch chains, cell `(bran
 real agent in `runs/iterNNNN/tree/attempt_*/` workspaces. Through the `Question` the policy cannot
 tell them apart, which is what makes replay evaluation valid. Its `GridPlanningContext` can: the
 `trace_*` fields are set only in replay, so each replay episode also records the plan made with
-them cleared (GAPS.md §3, "Live-plan signal in replay"). Replay only reveals what the recorded
-tree contains — a
-policy that goes wider or deeper than the behaviour policy is truncated (GAPS.md §6).
+them cleared. Replay's history also stops before the replayed trace, so that plan is not the one
+`online()` would run next (GAPS.md §3, "Live-plan signal in replay"). Replay only reveals what
+the recorded tree contains — a policy that goes wider or deeper than the behaviour policy is
+truncated (GAPS.md §6).
 
 **Policy contract is frozen.** `see/policy/api.py` (`LLMDesignedMethod`, `GridPlan`,
 `GridPlanningContext`, `Observation`, `CellMeta`, `SimResult`) and

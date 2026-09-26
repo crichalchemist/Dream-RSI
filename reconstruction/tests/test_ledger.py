@@ -153,11 +153,12 @@ def _support_context() -> GridPlanningContext:
     )
 
 
-def test_a_policy_that_clamps_in_replay_but_plans_wider_live_is_flagged_with_its_reward_unchanged():
-    """D2a's deployed version clamped its plan to the replay-only trace fields, so none of its
-    episodes was out of support, while live it planned deeper than any recorded tree. Each episode
-    also records the plan the policy makes with those fields cleared, as online() gives it; the
-    flag never changes what the episode scores."""
+def test_a_policy_that_clamps_to_the_trace_fields_is_flagged_with_its_reward_unchanged():
+    """A policy that clamps its plan to the replay-only trace fields is never out of support in
+    replay. Each episode also records the plan the policy makes with those fields cleared, which
+    flags it; the flag never changes what the episode scores. D2a's deployed version is not caught
+    this way: its clamp bound only once history was present, and a one-trace pool's replay has
+    none (GAPS §3, "Live-plan signal in replay")."""
     trace = synthetic_trace(0, branches=5, refine=6, max_parallelism=5)
     context = _support_context()
 
@@ -206,6 +207,40 @@ def test_a_live_plan_that_raises_is_recorded_not_an_episode_error():
     episode = run_episode(RaisesLive(None), trace, _support_context())
     assert (episode.error, episode.live_plan, episode.beyond_support) == (None, None, False)
     assert "RuntimeError: no support fields" in (episode.live_plan_error or "")
+
+
+class _OneRoot(ParallelRefine):
+    """Probes one root and stops, so cells stay legal after solve returns."""
+
+    def solve(self, question, budget=None):
+        question.reset()
+        question.probe_batch(question.legal_roots()[:1])
+
+
+class _ProbesFromPlanGrid(_OneRoot):
+    """Keeps the question from solve and probes it again whenever plan_grid is asked later."""
+
+    def solve(self, question, budget=None):
+        self.kept = question
+        return super().solve(question, budget)
+
+    def plan_grid(self, context):
+        kept = getattr(self, "kept", None)
+        if kept is not None:
+            kept.probe_batch(kept.legal_actions()[: kept.max_parallelism])
+        return super().plan_grid(context)
+
+
+def test_a_policy_that_probes_its_kept_question_from_plan_grid_cannot_change_its_own_score():
+    """The extra plan_grid call comes after the episode is scored, so a policy that kept the
+    question from solve and probes it there scores exactly what the same policy scores without."""
+    trace = synthetic_trace(0, branches=5, refine=6, max_parallelism=5)
+    probing = _ProbesFromPlanGrid(None)
+    kept = run_episode(probing, trace, _support_context(), record=True)
+    quiet = run_episode(_OneRoot(None), trace, _support_context(), record=True)
+    fields = ("probes", "best", "rounds", "effective_rounds", "attainment", "penalty", "eq1", "log")
+    assert [getattr(kept, f) for f in fields] == [getattr(quiet, f) for f in fields]
+    assert probing.kept.budget_spent > kept.probes  # the extra call did probe
 
 
 def test_the_floor_is_reswept_for_reference_and_never_deployed(tmp_path, stub_prompts):

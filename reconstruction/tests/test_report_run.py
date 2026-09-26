@@ -189,9 +189,10 @@ def test_an_untouched_attempt_is_reported_with_its_source_and_both_scores(toy_ru
     }
 
 
-def test_versions_that_would_plan_beyond_the_tree_live_are_counted_per_version(toy_run):
-    """WIDE asks for 3 x 1 live too, within the 3 x 2 caps and beyond every 2 x 1 tree, so each
-    of its episodes is beyond support; m0 plans the fallback and EMPTY leaves it to the fallback."""
+def test_versions_that_plan_beyond_a_tree_without_its_trace_fields_are_counted_per_version(toy_run):
+    """WIDE asks for 3 x 1 with the trace fields cleared too, within the 3 x 2 caps and beyond
+    every 2 x 1 tree, so each of its episodes is beyond support; m0 plans the fallback and EMPTY
+    leaves it to the fallback."""
     report, _ = toy_run
     rows = [(v["version"], v["beyond_support"], v["live_asked"]) for v in report["versions"]]
     assert rows == [
@@ -208,6 +209,9 @@ def test_versions_that_would_plan_beyond_the_tree_live_are_counted_per_version(t
         [],
         True,
     )
+    md = report_run.markdown(report)
+    assert "2 version(s) planned beyond a replayed tree with the trace fields cleared; 0 of" in md
+    assert "| r0001_t01_m0 | 12 | 0 | - | - | 0 | - |" in md  # measured, and nothing asked beyond
 
 
 def test_versions_that_end_on_an_empty_batch_are_named_with_their_cause(toy_run):
@@ -337,14 +341,16 @@ def test_the_loops_untouched_flag_and_the_byte_check_are_both_shown_and_disagree
 
 def test_a_workdir_from_before_d2b_reads_not_measured():
     """D2a's committed evidence predates the live-plan signal, the loop's untouched flag and the
-    repeat setting: the report says so, rather than reading 0 or False."""
+    repeat setting: the report says so, rather than reading 0, False, "n/a" or "-"."""
     report = report_run.build_report(os.path.join(RECON, "evidence", "d2a-lasso", "workdir"))
     assert [v["beyond_support"] for v in report["versions"]] == [None, None, None]
     assert (report["eval_repeats"], report["untouched"]["loop_flagged"]) == (None, None)
     md = report_run.markdown(report)
-    assert "Live plans beyond the recorded tree: not measured." in md
+    assert "Plans beyond a replayed tree with the trace fields cleared: not measured." in md
     assert "The loop's own untouched flag: not measured." in md
     assert "Evaluation repeats in force: not measured." in md
+    assert md.count("| 12 | 0 | - | - | not measured | not measured |") == 3  # the grid asked
+    assert "| 0.0134266 | 0.0167488 | not measured |" in md  # the repeat spread
 
 
 def test_the_health_table_reports_the_repeats_in_force_and_their_median_spread(
@@ -420,6 +426,31 @@ def test_a_workdir_without_the_loops_flag_still_lists_what_the_byte_check_finds(
     assert report["untouched"]["loop_flagged"] is None
 
 
+def test_a_stderr_tail_the_loop_never_recorded_reads_not_measured_not_empty(tmp_path, stub_prompts):
+    """A score.json from before D2b has no agent_stderr, while an agent that printed nothing has
+    one with nothing in it; the report must not show both as "-"."""
+    workdir = tmp_path / "w"
+    workdir.mkdir()
+    _launch(workdir)
+    cfg = _config(workdir, iterations=1, versions=1)
+    DreamRSI(cfg, make_task(str(workdir)), _NonZeroExit(), ScriptedPolicyAgent()).run()
+    report = report_run.build_report(str(workdir))
+    (case,) = report["untouched"]["cases"]
+    assert (case["cell"], case["agent_stderr"]) == ("b0a1", "")  # recorded, and empty
+    assert "| True | True | - |" in report_run.markdown(report)
+    pattern = workdir / "runs" / "iter*" / "tree" / "attempt_*" / "eval" / "score.json"
+    for path in glob.glob(str(pattern)):
+        with open(path) as f:
+            score = json.load(f)
+        del score["agent_stderr"]
+        with open(path, "w") as f:
+            json.dump(score, f)
+    report = report_run.build_report(str(workdir))
+    (case,) = report["untouched"]["cases"]
+    assert (case["cell"], case["agent_stderr"]) == ("b0a1", None)
+    assert "| True | True | not measured |" in report_run.markdown(report)
+
+
 def test_an_untouched_attempt_whose_program_is_gone_is_not_counted_as_checked(
     tmp_path, stub_prompts
 ):
@@ -461,8 +492,9 @@ def test_repeats_cut_short_by_a_failed_run_are_not_counted_as_evaluation_noise(
 
 
 def test_a_version_whose_live_plan_raised_is_counted_not_read_as_within_support(tmp_path):
-    """online() does not catch plan_grid, so a version whose live plan raises would stop the
-    next iteration once deployed; its episodes must not read as simply within support."""
+    """A version whose plan_grid raised when asked without the trace fields, given that replay's
+    history, has no plan to compare with the tree; its episodes must not read as simply within
+    support."""
     rdir = tmp_path / "r0001_t01_m1"
     (rdir / "proposal_results").mkdir(parents=True)
     episode = {"out_of_support": False, "error": None, "beyond_support": False}

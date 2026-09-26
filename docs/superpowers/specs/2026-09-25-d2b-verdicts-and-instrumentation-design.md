@@ -283,7 +283,7 @@ they protect:
   - `test_the_baseline_is_scored_with_the_same_repeats_as_the_attempts`.
   - `test_the_launch_record_carries_eval_repeats`.
 - **Live plan.**
-  - `test_a_policy_that_clamps_in_replay_but_plans_wider_live_is_flagged_with_its_reward_unchanged`.
+  - `test_a_policy_that_clamps_to_the_trace_fields_is_flagged_with_its_reward_unchanged`.
   - `test_a_live_plan_that_raises_is_recorded_not_an_episode_error`.
 - **Guard.**
   - `test_a_refused_restart_records_no_launch`.
@@ -411,8 +411,45 @@ design in these places.
    - A repeat set cut short by a failed run is left out of `repeat_spread`. The gap to a failed run
      is a failure, not evaluation noise.
    - Each version counts the episodes whose live plan raised (`live_plan_errors`), and section 2
-     shows the count beside "beyond support". `online()` does not catch `plan_grid`, so such a
-     version would stop the next iteration once deployed. Without the count, its episodes would
-     read as within support.
-6. **Test count.** Items 3 to 5 add six tests, for 25 new tests in all (123 → 148). The CI pin
-   moves to 148.
+     shows the count beside "beyond support". Such a version raised when asked without the trace
+     fields, given that replay's history. That does not show `online()` would stop on it:
+     `online()` plans with every manifest, so the version may not raise there, and a version can
+     also raise live but not in replay. Without the count, its episodes would read as within
+     support.
+6. **Test count.** Items 3 to 5 add six tests and item 7 two more, for 27 new tests in all
+   (123 → 150). The CI pin moves to 150.
+7. **What the whole-branch review changed.**
+   - **R12, what the live-plan signal measures.** The extra `plan_grid` call clears only the two
+     trace fields. Its history still comes from `see/pool.py:context_factory`, which holds only
+     the manifests of cycles before the replayed trace, while `online()` plans with every
+     manifest in the pool. So the signal is the plan the policy makes for that trace's cycle
+     without the trace fields, given the history that cycle had, not the plan the version would
+     run next live. It flags a policy whose plan reads the trace fields and misses a clamp that
+     binds only once later history is present. On D2a's pool it reads 0 while m2 planned 4 x 4
+     live, because replay's history stops before the pool's one trace and m2 plans 4 x 3 without
+     history. Section 5's "the context `online()` gives it live" and "the grid the policy would
+     run live", and section 3's "versions m1 and m2 clamp their plans to them", are superseded:
+     in replay, m1 and m2 planned their bootstrap for an empty history. GAPS, the README,
+     `.claude/CLAUDE.md`, the report's section 2, the code comments and two test names now say
+     what is measured, and item 5's last bullet is corrected in place. The per-version "next
+     live plan", computed with every manifest in history and the trace fields cleared as
+     `online()` does, is **D2c's first prerequisite, before any paid run**.
+   - **R13.** `repeat_spread`, an absent `agent_stderr` and the grid asked with the trace fields
+     cleared now read "not measured" on a workdir that predates them, as section 6.3 says.
+   - **R14.** GAPS's archive-guard row names `check_iteration`, `run_episode` reads the
+     episode's metrics before the extra call, the interrupt row adds k runs per attempt queued on
+     the evaluation lock, and the report is titled "Run report".
+   - **Handed forward to D2c.**
+     - Run `report_run --copy-evidence` on the run host, since redaction knows only that host's
+       home and temp paths.
+     - On Linux the path rule has no leading boundary: `/var/tmp/x` becomes `/var$TMPDIR/x`,
+       which over-redacts but leaks nothing.
+     - Review `agent_stderr` values by eye before committing evidence. They can carry program
+       text or account names that no rule matches, and a GCP OS Login username embeds the
+       email's local part and domain.
+     - Label the two spread definitions: `noise()` uses (max − min) / min, `repeat_spread` uses
+       (max − min) / median.
+     - Count the default-beta live plans separately.
+     - De-flake `test_timeout_returns_even_when_an_escapee_holds_the_pipes` and
+       `test_agent_timeout_kills_the_whole_process_group`. Both predate D2b and fail under host
+       load.

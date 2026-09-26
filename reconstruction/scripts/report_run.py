@@ -1,4 +1,4 @@
-"""Turn a Dream-RSI workdir into the D2a evidence report: report.md and report.json.
+"""Turn a Dream-RSI workdir into its run report: report.md and report.json.
 
     python scripts/report_run.py --workdir ~/dream-rsi-runs/d2a-lasso --out evidence/d2a-lasso \\
         --host-json evidence/d2a-lasso/host.json --archive ~/dream-rsi-runs/d2a-lasso.tar.gz \\
@@ -168,7 +168,9 @@ def analyse_iteration(workdir: str, run_dir: str, frozen: str, program: str) -> 
                 "source_score": source_score,
                 "byte_identical": identical,
                 "loop_untouched": loop_says,
-                "agent_stderr": _last_line(score.get("agent_stderr") or ""),
+                "agent_stderr": _last_line(score["agent_stderr"] or "")
+                if "agent_stderr" in score
+                else None,  # absent before D2b
             }
         )
     planned = manifest.get("planned_grid")
@@ -214,7 +216,8 @@ def analyse_version(rdir: str, grids: dict, fallback, selected: set) -> dict:
     measured = bool(episodes) and all("beyond_support" in e for e in episodes)  # D2b onwards
     beyond = [e for e in episodes if e.get("beyond_support")]
     live_asked = {(e["live_plan"]["branch_count"], e["live_plan"]["refine_count"]) for e in beyond}
-    raised = sum(1 for e in episodes if e.get("live_plan_error"))  # online() does not catch these
+    # raised when asked without the trace fields, given that replay's history
+    raised = sum(1 for e in episodes if e.get("live_plan_error"))
     asked = {
         (e["plan"]["branch_count"], e["plan"]["refine_count"]) if e["plan"] else tuple(fallback)
         for e in clipped
@@ -441,7 +444,7 @@ def _cell(text) -> str:
 def markdown(r: dict) -> str:
     caps = r["caps"]
     out = [
-        "# D2a run report",
+        "# Run report",
         "",
         f"Workdir `{r['workdir']}`, {r['launches']} launch(es), task `{r['task'].get('name')}`.",
     ]
@@ -474,22 +477,25 @@ def markdown(r: dict) -> str:
         f"{len(oos['flagged'])} version(s) replayed on clipped episodes; "
         f"{len(oos['flagged_deployed'])} of them deployed. "
         + (
-            f"{len(oos['beyond_support'])} version(s) would plan beyond the recorded tree live; "
-            f"{len(oos['beyond_support_deployed'])} of them deployed."
+            f"{len(oos['beyond_support'])} version(s) planned beyond a replayed tree with the "
+            f"trace fields cleared; {len(oos['beyond_support_deployed'])} of them deployed."
             if oos["measured"]
-            else "Live plans beyond the recorded tree: not measured."
+            else "Plans beyond a replayed tree with the trace fields cleared: not measured."
         ),
         "",
-        "| Version | Episodes | Clipped | Asked | Recorded | Beyond support live | Live asked "
-        "| Deployed |",
+        "| Version | Episodes | Clipped | Asked | Recorded | Beyond support, fields cleared "
+        "| Asked, fields cleared | Deployed |",
         "|---|---|---|---|---|---|---|---|",
     ]
     for v in r["versions"]:
         asked = ", ".join(_grid(a) for a in v["asked"]) or "-"
         recorded = ", ".join(_grid(g) for g in v["recorded"]) or "-"
         live = ", ".join(_grid(g) for g in v["live_asked"]) or "-"
+        if v["beyond_support"] is None:
+            live = "not measured"
         beyond = _measured(v["beyond_support"])
-        if v["live_plan_errors"]:  # its live plan raised: online() would stop on it
+        # raised when asked without the trace fields, given that replay's history
+        if v["live_plan_errors"]:
             beyond += f" ({v['live_plan_errors']} raised)"
         out.append(
             f"| {v['version']} | {v['episodes']} | {v['clipped']} | {asked} | {recorded} | "
@@ -524,11 +530,12 @@ def markdown(r: dict) -> str:
     ]
     for c in u["cases"]:
         flag = _measured(c["loop_untouched"]) + (" (disagrees)" if c in split else "")
+        stderr = "not measured" if c["agent_stderr"] is None else (_cell(c["agent_stderr"]) or "-")
         out.append(
             f"| {c['iteration']} | {c['cell']} | {c['source']} | {c['fail_class']} | "
             f"{c['agent_timed_out']} | {_num(c['agent_returncode'])} | {c['evaluated']} | "
             f"{_num(c['score'])} | {_num(c['source_score'])} | {_measured(c['byte_identical'])} "
-            f"| {flag} | {_cell(c['agent_stderr']) or '-'} |"
+            f"| {flag} | {stderr} |"
         )
     e = r["empty_batches"]
     out += [
@@ -560,11 +567,12 @@ def markdown(r: dict) -> str:
     ]
     for i in r["iterations"]:
         classes = ", ".join(f"{k} {n}" for k, n in i["fail_classes"].items())
+        spread = "not measured" if i["repeat_spread"] is None else _num(i["repeat_spread"])
         out.append(
             f"| {i['iteration']} | {i['attempts']} | {i['successes']} | {classes} | "
             f"{i['agent_timeouts']} | {i['agent_failures']} | {i['no_program']} | "
             f"{i['evaluator_crashed']} | {_num(i['baseline_score'])} | {_num(i['best_score'])} | "
-            f"{_num(i['repeat_spread'])} | {_cell(i['error'] or '')} |"
+            f"{spread} | {_cell(i['error'] or '')} |"
         )
     out += ["", "| Version | Valid | Reward | Eq. (1) V | Deployed |", "|---|---|---|---|---|"]
     for v in r["versions"]:

@@ -57,6 +57,12 @@ def test_an_env_wrapped_agent_reports_the_version_of_the_cli_it_wraps():
     assert version is not None and version.startswith("Python 3")
 
 
+def test_an_env_argv_with_options_records_no_version_rather_than_the_environment():
+    """``env -u SOMEVAR prog`` must not run ``env -u --version``, which prints the environment."""
+    version = runner.cli_version(["env", "-u", "SOMEVAR", "python3", "-c", "pass"])
+    assert version is None
+
+
 def test_the_eigen_version_is_read_from_the_headers_the_run_compiles_with(tmp_path):
     util = tmp_path / "eigen3" / "Eigen" / "src" / "Core" / "util"
     util.mkdir(parents=True)

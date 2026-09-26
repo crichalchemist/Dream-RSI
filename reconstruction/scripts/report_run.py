@@ -106,7 +106,7 @@ def analyse_iteration(workdir: str, run_dir: str, frozen: str, program: str) -> 
     tree = os.path.join(run_dir, "tree")
     baseline_dir = os.path.join(workdir, "task", "baseline")
     t = manifest["iteration"]
-    timeouts = crashed = 0
+    timeouts = crashed = failures = unchecked = 0
     untouched = []
     for c in sorted(trace.cells.values(), key=lambda c: c.seq):
         node = os.path.join(tree, node_dirname(c.branch, c.attempt))
@@ -114,9 +114,16 @@ def analyse_iteration(workdir: str, run_dir: str, frozen: str, program: str) -> 
         score = _json(score_path) if os.path.exists(score_path) else {}
         timeouts += bool(score.get("agent_timed_out"))
         crashed += bool(score.get("evaluator_crashed"))
+        returncode = score.get("agent_returncode")
+        failures += returncode is not None and returncode != 0
         mine = os.path.join(node, program)
         source, source_attempt = resume_source(tree, baseline_dir, program, c.branch, c.attempt)
-        if not (os.path.exists(mine) and _bytes(mine) == _bytes(source)):
+        if not os.path.exists(mine):
+            # a cell the agent left a program for (fail_class != "no_program") but whose file is
+            # gone from disk (e.g. a report run on a program-stripped copy) cannot be checked
+            unchecked += c.fail_class != "no_program"
+            continue
+        if _bytes(mine) != _bytes(source):
             continue
         if source_attempt is None:
             kind, source_score = "baseline", trace.baseline_score
@@ -131,6 +138,7 @@ def analyse_iteration(workdir: str, run_dir: str, frozen: str, program: str) -> 
                 "source": kind,
                 "fail_class": c.fail_class,
                 "agent_timed_out": bool(score.get("agent_timed_out")),
+                "agent_returncode": returncode,
                 "evaluated": c.evaluated,
                 "score": c.score,
                 "source_score": source_score,
@@ -153,8 +161,10 @@ def analyse_iteration(workdir: str, run_dir: str, frozen: str, program: str) -> 
         "successes": sum(c.success for c in trace.cells.values()),
         "fail_classes": dict(sorted(fail_classes.items())),
         "agent_timeouts": timeouts,
+        "agent_failures": failures,
         "no_program": fail_classes.get("no_program", 0),
         "evaluator_crashed": crashed,
+        "untouched_unchecked": unchecked,
         "baseline_score": trace.baseline_score,
         "best_score": manifest.get("best_score"),
         "error": manifest.get("error"),
@@ -221,9 +231,15 @@ def sha256_of(path: str) -> str:
 def copy_evidence(workdir: str, dest: str) -> dict:
     """Copy the EVIDENCE subset under ``dest``, withholding any file that quotes a program."""
     copied, withheld = 0, []
+    workdir_real = os.path.realpath(workdir)
     for pattern in EVIDENCE:
         for path in sorted(glob.glob(os.path.join(glob.escape(workdir), pattern))):
             rel = os.path.relpath(path, workdir)
+            real = os.path.realpath(path)
+            outside = os.path.relpath(real, workdir_real).startswith(os.pardir)
+            if os.path.islink(path) or outside:
+                withheld.append(rel)
+                continue
             with open(path, errors="replace") as f:
                 if PROGRAM_MARKER in f.read():
                     withheld.append(rel)
@@ -291,7 +307,11 @@ def build_report(workdir: str, host_json: str | None = None, archive: str | None
             "flagged": [v["version"] for v in flagged],
             "flagged_deployed": [v["version"] for v in flagged if v["deployed"]],
         },
-        "untouched": {"attempts": sum(r["attempts"] for r in rows), "cases": untouched},
+        "untouched": {
+            "attempts": sum(r["attempts"] for r in rows),
+            "cases": untouched,
+            "unchecked": sum(r["untouched_unchecked"] for r in rows),
+        },
         "empty_batches": {
             "versions": [v["version"] for v in versions if v["cause"] == "empty_batch"],
             "live": [r["iteration"] for r in rows if r["error_cause"] == "empty_batch"],
@@ -306,6 +326,11 @@ def _grid(g) -> str:
 
 def _num(x) -> str:
     return "n/a" if x is None else f"{x:.6g}" if isinstance(x, float) else str(x)
+
+
+def _cell(text) -> str:
+    """Free text placed in a markdown table cell: newlines collapsed to spaces, ``|`` escaped."""
+    return str(text).replace("\n", " ").replace("|", "\\|")
 
 
 def markdown(r: dict) -> str:
@@ -355,21 +380,25 @@ def markdown(r: dict) -> str:
             f"{v['deployed']} |"
         )
     u = r["untouched"]
+    checked = u["attempts"] - u["unchecked"]
+    coverage = f"Untouched check covers {checked} of {u['attempts']} attempts"
+    coverage += f"; {u['unchecked']} had no program file on disk." if u["unchecked"] else "."
     out += [
         "",
         "## 3. Untouched programs",
         "",
-        f"{len(u['cases'])} of {u['attempts']} attempts left their resume source byte for byte.",
+        f"{len(u['cases'])} of {checked} attempts left their resume source byte for byte. "
+        + coverage,
         "",
-        "| Iteration | Cell | Source | Fail class | Agent timed out | Evaluated | Score | "
-        "Source score |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Iteration | Cell | Source | Fail class | Agent timed out | Agent returncode | "
+        "Evaluated | Score | Source score |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for c in u["cases"]:
         out.append(
             f"| {c['iteration']} | {c['cell']} | {c['source']} | {c['fail_class']} | "
-            f"{c['agent_timed_out']} | {c['evaluated']} | {_num(c['score'])} | "
-            f"{_num(c['source_score'])} |"
+            f"{c['agent_timed_out']} | {_num(c['agent_returncode'])} | {c['evaluated']} | "
+            f"{_num(c['score'])} | {_num(c['source_score'])} |"
         )
     e = r["empty_batches"]
     out += [
@@ -387,22 +416,23 @@ def markdown(r: dict) -> str:
         if v["cause"]:
             out.append(
                 f"| {v['version']} | {v['valid']} | {v['cause']} | {v['episode_errors']} | "
-                f"`{v['first_error']}` |"
+                f"`{_cell(v['first_error'])}` |"
             )
     out += [
         "",
         "## Health",
         "",
-        "| Iteration | Attempts | Successes | Fail classes | Agent timeouts | No program | "
-        "Evaluator crashed | Baseline | Best | Error |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| Iteration | Attempts | Successes | Fail classes | Agent timeouts | Agent failures | "
+        "No program | Evaluator crashed | Baseline | Best | Error |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for i in r["iterations"]:
         classes = ", ".join(f"{k} {n}" for k, n in i["fail_classes"].items())
         out.append(
             f"| {i['iteration']} | {i['attempts']} | {i['successes']} | {classes} | "
-            f"{i['agent_timeouts']} | {i['no_program']} | {i['evaluator_crashed']} | "
-            f"{_num(i['baseline_score'])} | {_num(i['best_score'])} | {i['error'] or ''} |"
+            f"{i['agent_timeouts']} | {i['agent_failures']} | {i['no_program']} | "
+            f"{i['evaluator_crashed']} | {_num(i['baseline_score'])} | {_num(i['best_score'])} | "
+            f"{_cell(i['error'] or '')} |"
         )
     out += ["", "| Version | Valid | Reward | Eq. (1) V | Deployed |", "|---|---|---|---|---|"]
     for v in r["versions"]:

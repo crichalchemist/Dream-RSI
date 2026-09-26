@@ -71,7 +71,10 @@ def test_an_eigen_root_without_eigen_headers_is_refused_before_any_run(tmp_path)
         link_eigen(str(tmp_path / "task"), str(tmp_path / "include"))
 
 
-def test_verify_lasso_points_its_evaluator_copy_at_the_host_eigen(tmp_path):
+def test_verify_lasso_points_its_evaluator_copy_at_the_host_eigen(tmp_path, monkeypatch):
+    # load_evaluator setdefaults this variable and leaves it set; setenv records its absence, so
+    # teardown removes it (delenv on an absent variable records nothing to restore).
+    monkeypatch.setenv("EVALUATOR_CONCURRENT_PROCESSES", "1")
     verify_lasso = load_module_from_path("verify_lasso_under_test", VERIFY_LASSO)
     host = _host_eigen(tmp_path / "eigen3")
     (tmp_path / "copy").mkdir()

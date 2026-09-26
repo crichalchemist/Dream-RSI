@@ -49,6 +49,8 @@ def cli_version(argv: list) -> str | None:
         i = 1
         while i < len(argv) and "=" in argv[i] and not argv[i].startswith("-"):
             i += 1
+        if i < len(argv) and argv[i].startswith("-"):
+            return None  # an env option (e.g. -u) before the program, not the program itself
     return first_line([*argv[: i + 1], "--version"])
 
 

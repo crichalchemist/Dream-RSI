@@ -7,8 +7,10 @@ alternates a version that plans one branch wider than any recorded tree (WIDE) a
 on an empty batch (EMPTY). Every expected number below is counted by hand from that script.
 """
 
+import glob
 import json
 import os
+import shutil
 
 import pytest
 
@@ -167,11 +169,14 @@ def test_an_untouched_attempt_is_reported_with_its_source_and_both_scores(toy_ru
     report, _ = toy_run
     assert report["untouched"] == {
         "attempts": 8,
+        "unchecked": 0,
         "cases": [
             {"iteration": 1, "cell": "b0a0", "source": "baseline", "fail_class": "ok"}
-            | {"agent_timed_out": False, "evaluated": True, "score": 1.0, "source_score": 1.0},
+            | {"agent_timed_out": False, "agent_returncode": 0}
+            | {"evaluated": True, "score": 1.0, "source_score": 1.0},
             {"iteration": 1, "cell": "b1a1", "source": "parent", "fail_class": "timeout"}
-            | {"agent_timed_out": True, "evaluated": True, "score": 1.1, "source_score": 1.1},
+            | {"agent_timed_out": True, "agent_returncode": None}
+            | {"evaluated": True, "score": 1.1, "source_score": 1.1},
         ],
     }
 
@@ -252,6 +257,76 @@ def test_the_health_table_counts_each_iterations_outcomes(toy_run):
     ]
 
 
+class _NonZeroExit:
+    """Adds 0.1 to x, except b0a1 whose agent exits 1 without touching the program."""
+
+    def __call__(self, prompt, *, cwd, target):
+        if os.path.basename(target) == "attempt_b000_a001":
+            return {"returncode": 1}
+        path = os.path.join(target, PROGRAM)
+        with open(path) as f:
+            x = json.load(f)["x"]
+        with open(path, "w") as f:
+            json.dump({"x": round(x + 0.1, 6)}, f)
+        return {"returncode": 0}
+
+
+def test_a_nonzero_agent_exit_is_counted_as_a_failure_not_a_silent_success(tmp_path, stub_prompts):
+    """b0a1's program is byte-identical to its parent because the agent never touched it, not
+    because it chose to; the health table must not read that as an ordinary "ok" success."""
+    workdir = tmp_path / "w"
+    workdir.mkdir()
+    _launch(workdir)
+    cfg = _config(workdir, iterations=1, versions=1)
+    DreamRSI(cfg, make_task(str(workdir)), _NonZeroExit(), ScriptedPolicyAgent()).run()
+    report = report_run.build_report(str(workdir))
+    (row,) = report["iterations"]
+    assert row["agent_failures"] == 1
+    (case,) = [c for c in report["untouched"]["cases"] if c["cell"] == "b0a1"]
+    assert case["agent_returncode"] == 1
+
+
+def test_a_program_missing_from_disk_cannot_be_checked_for_untouched(tmp_path, stub_prompts):
+    """report_run must say what the untouched check covered, never render "0 of N" as if it had
+    checked every attempt when the program files themselves are gone (e.g. a stripped copy)."""
+    workdir = tmp_path / "w"
+    workdir.mkdir()
+    _launch(workdir)
+    cfg = _config(workdir, iterations=1, versions=1)
+    DreamRSI(cfg, make_task(str(workdir)), ScriptedDiscoveryAgent(), ScriptedPolicyAgent()).run()
+    copy_dir = tmp_path / "copy"
+    shutil.copytree(workdir, copy_dir)
+    for path in glob.glob(
+        os.path.join(str(copy_dir), "runs", "iter*", "tree", "attempt_*", PROGRAM)
+    ):
+        os.remove(path)
+    report = report_run.build_report(str(copy_dir))
+    (row,) = report["iterations"]
+    assert row["attempts"] == 4  # the scripted agent always writes a program: no "no_program" cell
+    assert row["untouched_unchecked"] == 4
+    assert report["untouched"]["unchecked"] == 4
+    assert report["untouched"]["cases"] == []
+    md = report_run.markdown(report)
+    assert "Untouched check covers 0 of 4 attempts; 4 had no program file on disk." in md
+    assert "0 of 4 attempts left" not in md  # never claim full coverage found nothing untouched
+
+
+def test_copy_evidence_does_not_follow_a_symlink_out_of_the_workdir(tmp_path):
+    workdir = tmp_path / "w"
+    outside = tmp_path / "outside.md"
+    outside.write_text("not part of the workdir")
+    node = workdir / "runs" / "iter0001" / "tree" / "attempt_b000_a000"
+    node.mkdir(parents=True)
+    (node / "proposal.md").symlink_to(outside)
+    dest = tmp_path / "out"
+    result = report_run.copy_evidence(str(workdir), str(dest))
+    assert result == {
+        "copied": 0,
+        "withheld": ["runs/iter0001/tree/attempt_b000_a000/proposal.md"],
+    }
+    assert not (dest / "runs" / "iter0001" / "tree" / "attempt_b000_a000" / "proposal.md").exists()
+
+
 def test_the_evidence_subset_carries_no_program_and_withholds_a_quoted_one(toy_run):
     """43 files: state.json and launches.jsonl; three per frozen iteration (6); eight score.json;
     two error.txt (the timeout, the deleted program); seven of eight proposals; method.py and two
@@ -302,6 +377,12 @@ def test_the_smoke_tests_noise_is_the_relative_spread_of_its_repeats(tmp_path):
     assert report_run.noise(str(tmp_path / "host.json")) == {
         "seed": {"scores": [0.5, 0.625], "geo_mean_ms": [2.0, 1.6], "spread": 0.25}
     }
+
+
+def test_free_text_in_a_table_cell_cannot_break_the_markdown_table():
+    assert report_run._cell("line one\nline two | still one cell") == (
+        "line one line two \\| still one cell"
+    )
 
 
 def test_the_markdown_report_answers_the_four_questions(toy_run):

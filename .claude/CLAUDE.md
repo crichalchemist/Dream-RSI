@@ -131,5 +131,7 @@ prompts from `generated/`, which is why extraction is a prerequisite.
   points do not map, which run no cleanup, check for a surviving `see sweep` process first.
 - `*.local.md` files are private maintainer notes and are gitignored.
 - `evidence/` holds committed run evidence written by tools, never an attempt's program
-  (SimpleTES is AGPL): `report_run.py --copy-evidence` copies an allowlist and withholds any
-  file quoting `CPP_CODE`. It is excluded from ruff and the whitespace hooks, kept as written.
+  (SimpleTES is AGPL): `report_run.py --copy-evidence` copies an allowlist, withholds any
+  file quoting `CPP_CODE` and any JSON that does not parse, and in the rest (and in the report
+  itself) replaces compiler-quoted source lines, this host's home and temp paths, and email
+  addresses. It is excluded from ruff and the whitespace hooks, kept as written.

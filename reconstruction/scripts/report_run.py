@@ -20,7 +20,10 @@ import glob
 import hashlib
 import json
 import os
+import re
 import shutil
+import tempfile
+from typing import Any
 
 from see.live import node_dirname
 from see.world import Trace
@@ -46,6 +49,16 @@ EVIDENCE = (
 PROGRAM_MARKER = (
     "CPP_CODE"  # opens every SimpleTES Lasso program (AGPL); a file quoting it stays out
 )
+# Rewritten in every copied file and in the report itself (D2b spec section 6.2): what D2a's
+# evidence commit had to redact by hand.
+SOURCE_LINE = re.compile(r"^ *\d+ \| .*$", re.M)  # a compiler quoting source: "   79 |   y = x;"
+ADDRESS = re.compile(r"[\w.%+-]+@[\w-]+(?:\.[\w-]+)+")
+REDACTIONS = {
+    "source_lines": "source lines withheld",
+    "temp_paths": "temp paths shortened to $TMPDIR",
+    "home_paths": "home paths shortened to ~",
+    "addresses": "addresses withheld",
+}
 
 
 def _json(path: str):
@@ -228,9 +241,52 @@ def sha256_of(path: str) -> str:
     return h.hexdigest()
 
 
+def redact(text: str, counts: collections.Counter) -> str:
+    """``text`` without quoted program source, this host's temp and home paths, or email
+    addresses; each rule's replacements are added to ``counts``."""
+    text, n = SOURCE_LINE.subn("[source line withheld]", text)
+    counts["source_lines"] += n
+    for rule, directory, short in (  # the temp directory first: it may lie under the home one
+        ("temp_paths", tempfile.gettempdir(), "$TMPDIR"),
+        ("home_paths", os.path.expanduser("~"), "~"),
+    ):
+        if directory.rstrip(os.sep):  # a home of "/" would match every absolute path
+            # the directory itself or any path under it, never a longer name that starts with it
+            text, n = re.subn(re.escape(directory) + r"(?![\w-])", short, text)
+            counts[rule] += n
+    text, n = ADDRESS.subn("[address withheld]", text)
+    counts["addresses"] += n
+    return text
+
+
+def redact_json(value: Any, counts: collections.Counter) -> Any:
+    """``redact`` applied to every string in a parsed JSON value, keys included."""
+    if isinstance(value, str):
+        return redact(value, counts)
+    if isinstance(value, list):
+        return [redact_json(v, counts) for v in value]
+    if isinstance(value, dict):
+        return {redact(k, counts): redact_json(v, counts) for k, v in value.items()}
+    return value
+
+
+def _redacted_copy(path: str, text: str, counts: collections.Counter) -> str:
+    """JSON is redacted value by value, so a quoted line between escaped newlines is caught and
+    the copy stays valid JSON."""
+    if path.endswith(".jsonl"):
+        lines = [json.loads(line) for line in text.splitlines() if line.strip()]
+        return "".join(json.dumps(redact_json(v, counts)) + "\n" for v in lines)
+    if path.endswith(".json"):
+        return json.dumps(redact_json(json.loads(text), counts), indent=1) + "\n"
+    return redact(text, counts)
+
+
 def copy_evidence(workdir: str, dest: str) -> dict:
-    """Copy the EVIDENCE subset under ``dest``, withholding any file that quotes a program."""
+    """Copy the EVIDENCE subset under ``dest``, withholding any file that quotes a program or is
+    JSON that does not parse (a killed run can leave one cut short, and unparsed it cannot be
+    checked), and redacting the rest; a file no rule touches is copied byte for byte."""
     copied, withheld = 0, []
+    matches, files = collections.Counter(), collections.Counter()
     workdir_real = os.path.realpath(workdir)
     for pattern in EVIDENCE:
         for path in sorted(glob.glob(os.path.join(glob.escape(workdir), pattern))):
@@ -241,14 +297,28 @@ def copy_evidence(workdir: str, dest: str) -> dict:
                 withheld.append(rel)
                 continue
             with open(path, errors="replace") as f:
-                if PROGRAM_MARKER in f.read():
-                    withheld.append(rel)
-                    continue
+                text = f.read()
+            if PROGRAM_MARKER in text:
+                withheld.append(rel)
+                continue
+            counts = collections.Counter()
+            try:
+                published = _redacted_copy(path, text, counts)
+            except json.JSONDecodeError:
+                withheld.append(rel)
+                continue
             target = os.path.join(dest, rel)
             os.makedirs(os.path.dirname(target), exist_ok=True)
-            shutil.copyfile(path, target)
+            if sum(counts.values()):
+                with open(target, "w") as f:
+                    f.write(published)
+            else:
+                shutil.copyfile(path, target)
+            matches.update(counts)
+            files.update(rule for rule, n in counts.items() if n)
             copied += 1
-    return {"copied": copied, "withheld": withheld}
+    redacted = {rule: {"matches": matches[rule], "files": files[rule]} for rule in REDACTIONS}
+    return {"copied": copied, "withheld": withheld, "redacted": redacted}
 
 
 def _home_relative(path: str) -> str:
@@ -447,6 +517,21 @@ def markdown(r: dict) -> str:
         out.append(f"- {k}: {v}")
     for role, a in sorted((r["agents"] or {}).items()):
         out.append(f"- {role} agent: `{json.dumps(a.get('argv'))}`, version {a.get('version')}")
+    if r.get("evidence"):
+        ev = r["evidence"]
+        done = [
+            f"{n['matches']} {REDACTIONS[rule]} in {n['files']} file(s)"
+            for rule, n in ev["redacted"].items()
+            if n["matches"]
+        ]
+        out += [
+            "",
+            "## Evidence",
+            "",
+            f"Copied {ev['copied']} file(s); withheld {len(ev['withheld'])} that quote a program, "
+            "lead outside the workdir or do not parse.",
+            f"Redacted at copy time: {'; '.join(done) or 'nothing'}.",
+        ]
     if r["noise"]:
         out += [
             "",
@@ -479,6 +564,7 @@ def main(argv=None) -> dict:
         report["evidence"] = copy_evidence(
             os.path.abspath(a.workdir), os.path.join(a.out, "workdir")
         )
+    report = redact_json(report, collections.Counter())  # published beside the evidence
     with open(os.path.join(a.out, "report.json"), "w") as f:
         json.dump(report, f, indent=1)
     with open(os.path.join(a.out, "report.md"), "w") as f:

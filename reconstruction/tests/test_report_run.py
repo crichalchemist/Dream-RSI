@@ -11,6 +11,7 @@ import glob
 import json
 import os
 import shutil
+import tempfile
 
 import pytest
 
@@ -320,10 +321,10 @@ def test_copy_evidence_does_not_follow_a_symlink_out_of_the_workdir(tmp_path):
     (node / "proposal.md").symlink_to(outside)
     dest = tmp_path / "out"
     result = report_run.copy_evidence(str(workdir), str(dest))
-    assert result == {
-        "copied": 0,
-        "withheld": ["runs/iter0001/tree/attempt_b000_a000/proposal.md"],
-    }
+    assert (result["copied"], result["withheld"]) == (
+        0,
+        ["runs/iter0001/tree/attempt_b000_a000/proposal.md"],
+    )
     assert not (dest / "runs" / "iter0001" / "tree" / "attempt_b000_a000" / "proposal.md").exists()
 
 
@@ -336,10 +337,104 @@ def test_the_evidence_subset_carries_no_program_and_withholds_a_quoted_one(toy_r
     copied = [f for _, _, files in os.walk(out / "workdir") for f in files]
     assert PROGRAM not in copied
     assert len(copied) == 44
-    assert report["evidence"] == {
-        "copied": 44,
-        "withheld": ["runs/iter0002/tree/attempt_b000_a001/proposal.md"],
+    evidence = report["evidence"]
+    assert (evidence["copied"], evidence["withheld"]) == (
+        44,
+        ["runs/iter0002/tree/attempt_b000_a001/proposal.md"],
+    )
+    # the toy run quotes no source and no address; its paths lie under the temp directory
+    assert (
+        evidence["redacted"]["source_lines"]
+        == evidence["redacted"]["addresses"]
+        == {
+            "matches": 0,
+            "files": 0,
+        }
+    )
+
+
+def _attempt_dir(workdir):
+    node = workdir / "runs" / "iter0001" / "tree" / "attempt_b000_a000"
+    (node / "eval").mkdir(parents=True)
+    return node
+
+
+def test_quoted_source_lines_inside_json_strings_are_withheld_and_the_json_stays_valid(tmp_path):
+    """gcc quotes the failing line of the program as "   79 |   code"; inside score.json that line
+    sits between escaped newlines. D2a's evidence commit had to withhold it by hand."""
+    node = _attempt_dir(tmp_path / "w")
+    error = "x.cpp:79:27: error: expected ';'\n   79 |   double y = x\n      |              ^\n"
+    (node / "eval" / "score.json").write_text(json.dumps({"error": error, "combined_score": 0.0}))
+    (node / "error.txt").write_text(error)
+    (node / "proposal.md").write_text("one step up\n")
+    result = report_run.copy_evidence(str(tmp_path / "w"), str(tmp_path / "out"))
+    out = tmp_path / "out" / "runs" / "iter0001" / "tree" / "attempt_b000_a000"
+    withheld = "x.cpp:79:27: error: expected ';'\n[source line withheld]\n      |              ^\n"
+    assert json.loads((out / "eval" / "score.json").read_text())["error"] == withheld
+    assert (out / "error.txt").read_text() == withheld
+    assert (out / "proposal.md").read_bytes() == b"one step up\n"  # untouched: copied as is
+    assert result["redacted"]["source_lines"] == {"matches": 2, "files": 2}
+
+
+def test_home_temp_and_address_are_rewritten_and_counted(tmp_path, monkeypatch):
+    home, temp = tmp_path / "home" / "someone", tmp_path / "tmp"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(temp))
+    node = _attempt_dir(tmp_path / "w")
+    (node / "error.txt").write_text(
+        f"cache {temp}/lasso_cache/a.cpp\nlogged in as someone@example.com\nrun from {home}/runs\n"
+    )
+    result = report_run.copy_evidence(str(tmp_path / "w"), str(tmp_path / "out"))
+    out = tmp_path / "out" / "runs" / "iter0001" / "tree" / "attempt_b000_a000" / "error.txt"
+    assert out.read_text() == (
+        "cache $TMPDIR/lasso_cache/a.cpp\nlogged in as [address withheld]\nrun from ~/runs\n"
+    )
+    assert result["redacted"] == {
+        "source_lines": {"matches": 0, "files": 0},
+        "temp_paths": {"matches": 1, "files": 1},
+        "home_paths": {"matches": 1, "files": 1},
+        "addresses": {"matches": 1, "files": 1},
     }
+
+
+def test_the_home_and_temp_directories_themselves_are_redacted_not_only_paths_under_them(
+    tmp_path, monkeypatch
+):
+    """An environment dump or a working directory can name the directory itself, with no
+    separator after it; a longer name that merely starts with it is someone else's."""
+    home, temp = tmp_path / "home" / "someone", tmp_path / "tmp"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(temp))
+    node = _attempt_dir(tmp_path / "w")
+    (node / "error.txt").write_text(f"HOME={home}\nTMPDIR={temp}\nran in {home}.\n{home}2/x\n")
+    result = report_run.copy_evidence(str(tmp_path / "w"), str(tmp_path / "out"))
+    out = tmp_path / "out" / "runs" / "iter0001" / "tree" / "attempt_b000_a000" / "error.txt"
+    assert out.read_text() == f"HOME=~\nTMPDIR=$TMPDIR\nran in ~.\n{home}2/x\n"
+    assert result["redacted"]["home_paths"] == {"matches": 2, "files": 1}
+    assert result["redacted"]["temp_paths"] == {"matches": 1, "files": 1}
+
+
+def test_a_json_file_a_killed_run_cut_short_is_withheld_and_the_copy_goes_on(tmp_path):
+    """A SIGKILL can leave score.json half-written. Unparsed it cannot be checked for a quoted
+    program, so it is withheld, and the rest of the evidence is still copied."""
+    node = _attempt_dir(tmp_path / "w")
+    (node / "eval" / "score.json").write_text('{"error": "x.cpp:79:27: error\\n   79 |   dou')
+    (node / "error.txt").write_text("agent timed out\n")
+    result = report_run.copy_evidence(str(tmp_path / "w"), str(tmp_path / "out"))
+    out = tmp_path / "out" / "runs" / "iter0001" / "tree" / "attempt_b000_a000"
+    rel = os.path.join("runs", "iter0001", "tree", "attempt_b000_a000", "eval", "score.json")
+    assert result["withheld"] == [rel] and result["copied"] == 1
+    assert not (out / "eval" / "score.json").exists()
+    assert (out / "error.txt").read_text() == "agent timed out\n"
+
+
+def test_the_published_report_is_redacted_like_the_evidence(toy_run):
+    """report.json and report.md are published beside the evidence and quote stderr tails."""
+    report, out = toy_run
+    temp = tempfile.gettempdir() + os.sep
+    assert temp not in (out / "report.json").read_text()
+    assert temp not in (out / "report.md").read_text()
+    assert "$TMPDIR" + os.sep in report["workdir"]
 
 
 def test_the_archive_digest_is_recorded(toy_run):

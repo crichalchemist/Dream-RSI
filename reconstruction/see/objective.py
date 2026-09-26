@@ -21,6 +21,7 @@ inferred and exposed as parameters (see GAPS.md).
 from __future__ import annotations
 
 import dataclasses
+import operator
 import statistics
 import traceback
 from collections.abc import Callable, Sequence
@@ -122,6 +123,8 @@ def _live_grid(policy, context: GridPlanningContext) -> dict:
     asked = validate_plan(policy.plan_grid(context), context)
     b = asked.branch_count if asked else context.fallback_branch_count
     r = asked.refine_count if asked else context.fallback_refine_count
+    # a numpy integer is recorded as the int it is; a count that is no integer raises
+    b, r = operator.index(b), operator.index(r)
     return {"branch_count": b, "refine_count": r, "fallback": asked is None}
 
 
@@ -187,7 +190,7 @@ def run_episode(
             b, r = episode.live_plan["branch_count"], episode.live_plan["refine_count"]
             episode.beyond_support = b > trace.grid[0] or r > trace.grid[1]
         except Exception:
-            episode.live_plan_error = traceback.format_exc(limit=4)
+            episode.live_plan_error = traceback.format_exc(limit=5)  # 4 below _live_grid
     return episode
 
 
@@ -202,7 +205,7 @@ def next_live_plan(
     try:
         plan = _live_grid(policy_cls(None), context)  # baked-in default beta, as online() plans
     except Exception:
-        return {"error": traceback.format_exc(limit=4)}
+        return {"error": traceback.format_exc(limit=5)}
     b, r = plan["branch_count"], plan["refine_count"]
     plan["beyond_support"] = not any(b <= tb and r <= tr for tb, tr in grids)
     return plan

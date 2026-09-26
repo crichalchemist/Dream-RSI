@@ -29,10 +29,18 @@ def cmd_sweep(a):
         beta2=a.beta2,
         max_rounds=a.max_rounds,
     )
-    # after the sweep is scored, so it cannot change a score (GAPS §3, "Next live plan")
-    width = a.max_parallelism if a.max_parallelism is not None else pool[-1][0].max_parallelism
+
+    # After the sweep is scored, so an exception raised while planning cannot change a score;
+    # from the file and the pool loaded afresh, as online() loads them in its own process, so
+    # nothing the sweep's episodes left in the class or the manifests reaches it (GAPS §3,
+    # "Next live plan").
+    def fresh_policy(config):
+        return load_policy(a.method)(config)
+
+    fresh = load_pool(a.pool)
+    width = a.max_parallelism if a.max_parallelism is not None else fresh[-1][0].max_parallelism
     report["next_live_plan"] = next_live_plan(
-        cls, next_context(pool, a.fallback, a.hard_max, width), [t.grid for t, _ in pool]
+        fresh_policy, next_context(fresh, a.fallback, a.hard_max, width), [t.grid for t, _ in fresh]
     )
     report["plan_grid_override"] = overrides_plan_grid(cls)
     report["method"] = os.path.abspath(a.method)

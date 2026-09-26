@@ -339,3 +339,45 @@ task review each, a whole-branch review at the end, and the finishing menu.
 ## 12. Open questions
 
 None that block the plan.
+
+## 13. Amendments while planning (2026-09-25)
+
+The plan (`docs/superpowers/plans/2026-09-25-d2b-verdicts-and-instrumentation.md`) was generated
+from a spike: every task was built and gated in a throwaway worktree, one commit per task, and the
+plan's replace blocks rebuild each task's files byte for byte. The spike changed the design in
+these places.
+
+1. **Seven tasks, not six.** Section 6's report work is split in two:
+   - Task 5, redaction at copy time;
+   - Task 6, the report's new columns.
+
+   A reviewer could accept one and reject the other. The ledger and docs task becomes Task 7.
+2. **`score.json` records `untouched` on every attempt**, as true or false, not only when true.
+   Without that the report could not tell "checked, and not untouched" from a workdir that
+   predates the flag, which section 6.3 must show as "not measured".
+3. **A program the untouched check cannot read is left to the evaluator.** An agent that replaces
+   its program with a directory gets one failed cell, as before the check existed. Hashing it
+   unguarded would instead raise a worker fault that abandons the whole batch. A new test pins
+   this.
+4. **Where edits land.**
+   - Task 1 changes the "Agent and sweep child-process lifetime" row's clause "whether an
+     untouched program should count as `no_program` is D2", together with the code that settles
+     it. Section 7 had put it in the last task.
+   - Task 3 adds the live plan to `test_objective.py`'s rejected-plan comparison.
+   - Task 4 changes the "Interrupted iteration handling" and "Deploy-time code integrity" rows to
+     name `check_iteration`.
+   - Task 5 changes `.claude/CLAUDE.md`'s evidence line.
+   - Task 7 makes every README change.
+5. **Two tests are exempt from section 9's criterion 2.** They guard behaviour Task 1 must keep,
+   so they pass before it as well:
+   - `test_command_agent.py::test_a_timed_out_agent_that_edited_its_program_is_still_scored_as_a_timeout`;
+   - `test_loop.py::test_a_program_the_check_cannot_read_is_left_to_the_evaluator`.
+6. **Test names and count.** Section 8's list becomes the names in the plan, 19 new tests in all
+   (123 → 142).
+   - The timed-out untouched case is pinned by `test_agent_timeout_kills_the_whole_process_group`,
+     updated in place, and by the timed-out root in
+     `test_an_agent_that_changes_nothing_is_no_program_and_never_evaluated`.
+   - The "not measured" readings are pinned on D2a's committed evidence, a real pre-D2b workdir
+     (`test_a_workdir_from_before_d2b_reads_not_measured`).
+7. **The CI pin moves once**, in Task 7 (123 → 142). Each earlier task's gate checks its own
+   measured count.

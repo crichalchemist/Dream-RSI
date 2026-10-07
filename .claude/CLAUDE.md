@@ -29,7 +29,19 @@ python -m pytest -q tests/test_loop.py::test_on_policy_replay_reproduces_the_liv
 python -m see demo --workdir /tmp/drsi                                          # whole loop, toy task, ~8s
 python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tmp/sweep
 python scripts/report_run.py --workdir runs/lasso --out /tmp/report   # D2's four questions
+ruff check . && ruff format --check . && pyright   # the CI lint/type gate, as CI runs it
 ```
+
+- CI (`.github/workflows/ci.yml`: Ubuntu 3.10 and 3.13, macOS 3.13) runs pytest with `--junitxml`,
+  then `tools/check_junit.py report.xml --expect N`, which fails on any skip, error or a test count
+  other than N. Adding, removing or parametrizing a test means bumping `--expect` in the same commit.
+- Python 3.10 is the floor (`requires-python`, ruff `py310`, pyright `pythonVersion`): no 3.11+ syntax.
+- `pymupdf` is pinned because `tools/generated.sha256` depends on its extraction output; after a
+  bump, rewrite the manifest with `python tools/extract_listings.py --write-manifest`.
+- `.pre-commit-config.yaml` lives at the repo root and calls `reconstruction/.venv/bin/pyright`
+  directly, so the venv must exist at exactly that path for commits to pass.
+- Designs and plans for each deliverable (D1, D2a, D2c…) live in `docs/superpowers/specs/` and
+  `docs/superpowers/plans/`; read the current one before working on its branch.
 
 - Without `generated/`, `see demo` and `see/prompts.py` raise `FileNotFoundError`; the test suite
   no longer depends on it (`tests/conftest.py`'s `stub_prompts` fixture stands in for the real
@@ -89,10 +101,11 @@ real agent in `runs/iterNNNN/tree/attempt_*/` workspaces. Through the `Question`
 tell them apart, which is what makes replay evaluation valid. Its `GridPlanningContext` can: the
 `trace_*` fields are set only in replay, so each replay episode also records the plan made with
 them cleared. Replay's history also stops before the replayed trace, so that plan is not the one
-`online()` would run next; `see sweep` records that one per version as `next_live_plan`, for the
-report only (GAPS.md §3, "Live-plan signal in replay" and "Next live plan"). Replay only reveals
-what the recorded tree contains — a policy that goes wider or deeper than the behaviour policy is
-truncated (GAPS.md §6).
+`online()` would run next; `see sweep` records that one per version as `next_live_plan`. Both go
+to `instrumentation/<round>/instrumentation.json`, for the report only, outside the two files
+Listing 2 points the policy-development agent at (GAPS.md §3, "Live-plan signal in replay" and
+"Next live plan"). Replay only reveals what the recorded tree contains — a policy that goes wider
+or deeper than the behaviour policy is truncated (GAPS.md §6).
 
 **Policy contract is frozen.** `see/policy/api.py` (`LLMDesignedMethod`, `GridPlan`,
 `GridPlanningContext`, `Observation`, `CellMeta`, `SimResult`) and
@@ -125,8 +138,8 @@ prompts from `generated/`, which is why extraction is a prerequisite.
 - `LoopConfig.serialize_eval=True` by default: evaluations are serialized because timing-based
   tasks interfere with each other. Do not parallelize evaluation for Lasso or kernel tasks.
 - An interrupted iteration cannot be resumed: `online()` raises if `runs/iterNNNN/`,
-  `trace_pool/iterNNNN/` or any archive of the iteration `policy_dev/history/r*_tNN_m*/`
-  already exists, naming every one that does. Ctrl-C, SIGTERM and SIGHUP (the entry points call
+  `trace_pool/iterNNNN/`, any archive of the iteration `policy_dev/history/r*_tNN_m*/` or its
+  `instrumentation/r*_tNN_m*/` already exists, naming every one that does. Ctrl-C, SIGTERM and SIGHUP (the entry points call
   `install_signal_handlers()`; a SIGHUP inherited ignored, as under nohup, stays ignored) kill the
   running agents' process groups and freeze what was collected under `runs/iterNNNN/partial/`,
   never into the pool; an interrupt before the first attempt (planning, baseline evaluation)

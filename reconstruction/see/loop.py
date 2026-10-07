@@ -15,6 +15,7 @@ Layout under ``workdir`` (names quoted in Listing 2 are kept):
     policy_dev/method.py              {method_file}, edited by the dev agent
     policy_dev/history/baseline/      the parallel-refine floor
     policy_dev/history/rNNNN_*/       method.py + proposal_results/
+    instrumentation/*/                live-plan fields per sweep, out of the dev agent's view
     state.json                        deployed policy, round counter, log
 """
 
@@ -168,7 +169,10 @@ class DreamRSI:
         # once already, and a restart's offline() would recreate the first one (r{round+1}_tNN_m0),
         # because the round counter is persisted only on success
         archives = sorted(glob.glob(os.path.join(glob.escape(self.dev_history), f"r*_t{t:02d}_m*")))
-        existing = [p for p in (run_dir, out, *archives) if os.path.exists(p)]
+        # each archive's live-plan fields sit outside policy_dev/, and are named with it
+        where = os.path.join(glob.escape(self.w), "instrumentation", f"r*_t{t:02d}_m*")
+        instrumentation = sorted(glob.glob(where))
+        existing = [p for p in (run_dir, out, *archives, *instrumentation) if os.path.exists(p)]
         if existing:
             one = len(existing) == 1
             raise RuntimeError(
@@ -195,6 +199,21 @@ class DreamRSI:
         ctx = self._context(self.manifests())
         plan = validate_plan(policy.plan_grid(ctx), ctx)
         grid = (plan.branch_count, plan.refine_count) if plan else tuple(self.c.fallback_grid)
+        # before any evaluation or agent call: what the freeze will record about the plan must be
+        # writable, or the whole cycle would run and then fail to freeze (GAPS §3, "Grid counts")
+        try:
+            json.dumps(
+                {
+                    "beta": getattr(policy, "beta", None),
+                    "planned_grid": dataclasses.asdict(plan) if plan else None,
+                    "effective_grid": grid,
+                }
+            )
+        except (TypeError, ValueError) as e:
+            raise RuntimeError(
+                f"iteration {t}: the deployed policy's plan cannot be recorded ({e}); "
+                "refusing before any attempt runs"
+            ) from None
         # before runs/iterNNNN exists: an interrupt here leaves nothing to clean up
         baseline = self.baseline_score()
         tree, history = os.path.join(run_dir, "tree"), os.path.join(run_dir, "history")
@@ -369,6 +388,8 @@ class DreamRSI:
             str(hr),
             "--max-parallelism",
             str(self.c.max_parallelism),
+            "--instrumentation",  # outside policy_dev/, where the dev agent works (GAPS §3)
+            os.path.join(self.w, "instrumentation", os.path.basename(rdir)),
             "--betas",
             *map(str, self.c.betas),
         ]

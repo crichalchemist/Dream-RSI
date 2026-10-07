@@ -131,6 +131,108 @@ def test_the_loop_sweeps_with_its_own_parallelism(finished_loop, tmp_path, monke
     assert cmd[cmd.index("--max-parallelism") + 1] == str(finished_loop.c.max_parallelism)
 
 
+NUMPY_COUNTS = """
+import numpy as np
+from see.policies.parallel_refine import ParallelRefine
+from see.policy.api import GridPlan
+
+NAME = "NumpyCounts"
+
+
+class NumpyCounts(ParallelRefine):
+    def plan_grid(self, context):
+        return GridPlan(np.int64(2), np.float64(2.0), reason="numpy counts")
+"""
+
+
+def _numbers_config(tmp_path, source: str) -> LoopConfig:
+    """A 2 x 1 fallback under 3 x 2 caps, deploying ``source`` as the initial policy."""
+    policy = tmp_path / "policy.py"
+    policy.write_text(source)
+    return LoopConfig(
+        workdir=str(tmp_path / "w"),
+        max_parallelism=2,
+        fallback_grid=(2, 1),
+        hard_max_grid=(3, 2),
+        initial_policy=str(policy),
+    )
+
+
+def test_a_policy_that_plans_in_numpy_numbers_runs_and_freezes_its_cycle(tmp_path, stub_prompts):
+    """A numpy count used to run every attempt of the cycle and then fail to freeze it (int64 is
+    not JSON), leaving a half-written trace_pool entry; it is the plain int it is, so the cycle is
+    frozen whole on the grid the policy asked for (GAPS §3, "Grid counts")."""
+    cfg = _numbers_config(tmp_path, NUMPY_COUNTS)
+    loop = DreamRSI(
+        cfg, make_task(cfg.workdir), ScriptedDiscoveryAgent(seed=7), ScriptedPolicyAgent()
+    )
+    loop.online(1)
+    frozen = tmp_path / "w" / "trace_pool" / "iter0001"
+    manifest = json.loads((frozen / "live_cycle_manifest.json").read_text())
+    assert (manifest["planned_grid"], manifest["used_fallback"], manifest["effective_grid"]) == (
+        {"branch_count": 2, "refine_count": 2, "reason": "numpy counts"},
+        False,
+        {"branch_count": 2, "refine_count": 2},
+    )
+    assert Trace.load(str(frozen / "trace.json")).grid == (2, 2)
+
+
+UNRECORDABLE_REASON = """
+from see.policies.parallel_refine import ParallelRefine
+from see.policy.api import GridPlan
+
+NAME = "UnrecordableReason"
+
+
+class UnrecordableReason(ParallelRefine):
+    def plan_grid(self, context):
+        return GridPlan(2, 1, reason=object())
+"""
+
+FLOAT32_BETA = """
+import numpy as np
+from see.policies.parallel_refine import ParallelRefine
+
+NAME = "Float32Beta"
+
+
+class Float32Beta(ParallelRefine):
+    def __init__(self, config=None):
+        super().__init__(config)
+        self.beta = np.float32(0.5)
+"""
+
+
+@pytest.mark.parametrize("source", [UNRECORDABLE_REASON, FLOAT32_BETA], ids=["reason", "beta"])
+def test_a_plan_the_freeze_cannot_record_is_refused_before_anything_runs(
+    tmp_path, stub_prompts, source
+):
+    """The initial policy is never swept, and a plan's reason can change once history exists, so
+    the sweep cannot catch every plan the freeze would fail to write: online() refuses one before
+    the baseline evaluation or any agent call, and leaves nothing to clean up (GAPS §3, "Grid
+    counts")."""
+    cfg = _numbers_config(tmp_path, source)
+    task = make_task(cfg.workdir)
+    evaluated, called = [], []
+
+    def evaluate(path):
+        evaluated.append(path)
+        return task.evaluate(path)
+
+    def discovery(prompt, *, cwd, target):
+        called.append(target)
+        return {"returncode": 0}
+
+    loop = DreamRSI(
+        cfg, dataclasses.replace(task, evaluate=evaluate), discovery, ScriptedPolicyAgent()
+    )
+    with pytest.raises(RuntimeError, match="cannot be recorded"):
+        loop.online(1)
+    work = tmp_path / "w"
+    assert (evaluated, called, (work / "runs" / "iter0001").exists()) == ([], [], False)
+    assert os.listdir(work / "trace_pool") == []
+
+
 def test_agent_crash_is_a_failed_attempt_not_a_failed_episode(tmp_path, stub_prompts):
     task = make_task(str(tmp_path))
 

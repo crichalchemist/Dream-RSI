@@ -1,4 +1,5 @@
 import dataclasses
+from typing import Any
 
 import pytest
 
@@ -175,6 +176,25 @@ def test_default_hard_caps_admit_no_more_calls_than_the_paper():
             plan = validate_plan(GridPlan(branch_count, refine_count, reason="test"), context)
             if plan is not None:
                 assert plan.branch_count * (plan.refine_count + 1) <= 640  # 32 x 20, Flash
+
+
+def test_a_whole_number_count_of_any_type_is_the_int_it_is_and_any_other_rejects_the_plan():
+    """Listing 2's GridPlan takes integers and the runner checks their range (lines 206-210). A
+    numpy integer or an integral float is the plain int it is, so the plan is recorded and frozen
+    as ints; a fractional, non-finite or non-numeric count rejects the plan to the fallback grid,
+    as an out-of-range count does (GAPS §3, "Grid counts")."""
+    import numpy as np  # the lasso extra; an LLM-written policy may well plan with it
+
+    context = GridPlanningContext((), 2, 1, 8, 8, 4)
+    whole: list[tuple[Any, Any]] = [(4, 3), (np.int64(4), np.int32(3)), (4.0, np.float64(3.0))]
+    for b, r in whole:
+        plan = validate_plan(GridPlan(b, r, reason="whole"), context)
+        assert plan is not None and plan == GridPlan(4, 3, reason="whole")
+        assert (type(plan.branch_count), type(plan.refine_count)) == (int, int)
+    other: list[Any] = [4.5, float("nan"), float("inf"), "4", None]
+    for count in other:
+        assert validate_plan(GridPlan(count, 3, reason="other"), context) is None
+        assert validate_plan(GridPlan(4, count, reason="other"), context) is None
 
 
 def test_a_mistyped_objective_fails_before_any_budget_is_spent():

@@ -78,9 +78,11 @@ validated plan, including `reason`) and `effective_grid`. If that raises, `onlin
 exist, so nothing is left behind and no attempt has run.
 
 **Why it is still needed after §3.1.**
-- The sweep already scores such a version −∞. `beta_sweep.json` holds `default_beta`, and the
-  episodes file holds each plan's `reason`, so a version whose beta or reason cannot be written
-  fails its sweep and is never deployed.
+- The loop's sweep already scores such a version −∞. `see sweep` exits with an error when it
+  cannot write `default_beta` into `beta_sweep.json` or a plan's `reason` into the episodes file.
+  `_sweep` scores a failed sweep −∞, so the version is never deployed. Run by hand, the `reason`
+  case leaves a `beta_sweep.json` that parses and says `valid: true`; only the exit status shows
+  the failure (checked 2026-09-26).
 - What the sweep cannot catch are the initial policy, which is never swept, and a plan whose
   `reason` or counts become unwritable only once the full history exists. The next live plan
   records only counts.

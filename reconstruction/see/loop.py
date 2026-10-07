@@ -195,6 +195,21 @@ class DreamRSI:
         ctx = self._context(self.manifests())
         plan = validate_plan(policy.plan_grid(ctx), ctx)
         grid = (plan.branch_count, plan.refine_count) if plan else tuple(self.c.fallback_grid)
+        # before any evaluation or agent call: what the freeze will record about the plan must be
+        # writable, or the whole cycle would run and then fail to freeze (GAPS §3, "Grid counts")
+        try:
+            json.dumps(
+                {
+                    "beta": getattr(policy, "beta", None),
+                    "planned_grid": dataclasses.asdict(plan) if plan else None,
+                    "effective_grid": grid,
+                }
+            )
+        except (TypeError, ValueError) as e:
+            raise RuntimeError(
+                f"iteration {t}: the deployed policy's plan cannot be recorded ({e}); "
+                "refusing before any attempt runs"
+            ) from None
         # before runs/iterNNNN exists: an interrupt here leaves nothing to clean up
         baseline = self.baseline_score()
         tree, history = os.path.join(run_dir, "tree"), os.path.join(run_dir, "history")

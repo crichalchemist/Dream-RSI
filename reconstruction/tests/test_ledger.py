@@ -4,8 +4,10 @@ Each test is a hand-computed case for one ruling, named for the claim it protect
 ledger cannot drift from the code without a test going red.
 """
 
+import dataclasses
 import json
 import os
+from typing import Any, cast
 
 import pytest
 
@@ -209,6 +211,34 @@ def test_a_live_plan_that_raises_is_recorded_not_an_episode_error():
     episode = run_episode(RaisesLive(None), trace, _support_context())
     assert (episode.error, episode.live_plan, episode.beyond_support) == (None, None, False)
     assert "RuntimeError: no support fields" in (episode.live_plan_error or "")
+
+
+def test_a_fractional_plan_replays_on_the_fallback_grid_as_online_runs_it():
+    """A fractional count is no integer, so the runner's check rejects the plan: replay scores it
+    on the fallback grid exactly as a plan that returned None, where it used to replay a grid of
+    undefined meaning (GAPS §3, "Grid counts")."""
+    trace = synthetic_trace(0, branches=5, refine=6, max_parallelism=5)
+    context = dataclasses.replace(
+        _support_context(), fallback_branch_count=3, fallback_refine_count=2
+    )
+
+    class Fractional(ParallelRefine):
+        def plan_grid(self, context):
+            return GridPlan(cast(Any, 4.5), 6, reason="fractional")
+
+    class NoPlan(ParallelRefine):
+        def plan_grid(self, context):
+            return None
+
+    fractional = run_episode(Fractional(None), trace, context, record=True)
+    no_plan = run_episode(NoPlan(None), trace, context, record=True)
+    assert fractional.plan is None
+    assert (fractional.probes, fractional.best, fractional.log, fractional.live_plan) == (
+        no_plan.probes,
+        no_plan.best,
+        no_plan.log,
+        no_plan.live_plan,
+    )
 
 
 class _OneRoot(ParallelRefine):

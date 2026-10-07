@@ -21,6 +21,7 @@ inferred and exposed as parameters (see GAPS.md).
 from __future__ import annotations
 
 import dataclasses
+import numbers
 import operator
 import statistics
 import traceback
@@ -71,16 +72,31 @@ def pareto_auc(points: Sequence[tuple]) -> tuple:
     return auc, frontier
 
 
+def _whole(count) -> int | None:
+    """A whole number of any numeric type as the int it is; None for any other count."""
+    try:
+        return operator.index(count)  # int and numpy integers
+    except TypeError:
+        pass
+    if isinstance(count, numbers.Real) and float(count).is_integer():
+        return int(float(count))  # 4.0 and numpy floats
+    return None
+
+
 def validate_plan(plan: GridPlan | None, context: GridPlanningContext) -> GridPlan | None:
-    """The runner's check (Listing 2 lines 208-210); None means use the fallback grid."""
+    """The runner's check (Listing 2 lines 208-210); None means use the fallback grid.
+
+    GridPlan takes integers: a whole-number count is the plain int it is, and any other count
+    rejects the plan as an out-of-range one does (GAPS §3, "Grid counts").
+    """
     if plan is None:
         return None
-    if not (
-        1 <= plan.branch_count <= context.hard_max_branch_count
-        and 0 <= plan.refine_count <= context.hard_max_refine_count
-    ):
+    b, r = _whole(plan.branch_count), _whole(plan.refine_count)
+    if b is None or r is None:
         return None
-    return plan
+    if not (1 <= b <= context.hard_max_branch_count and 0 <= r <= context.hard_max_refine_count):
+        return None
+    return GridPlan(b, r, plan.reason)
 
 
 def default_context(trace: Trace) -> GridPlanningContext:
@@ -123,8 +139,6 @@ def _live_grid(policy, context: GridPlanningContext) -> dict:
     asked = validate_plan(policy.plan_grid(context), context)
     b = asked.branch_count if asked else context.fallback_branch_count
     r = asked.refine_count if asked else context.fallback_refine_count
-    # a numpy integer is recorded as the int it is; a count that is no integer raises
-    b, r = operator.index(b), operator.index(r)
     return {"branch_count": b, "refine_count": r, "fallback": asked is None}
 
 

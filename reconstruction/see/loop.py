@@ -15,6 +15,7 @@ Layout under ``workdir`` (names quoted in Listing 2 are kept):
     policy_dev/method.py              {method_file}, edited by the dev agent
     policy_dev/history/baseline/      the parallel-refine floor
     policy_dev/history/rNNNN_*/       method.py + proposal_results/
+    instrumentation/*/                live-plan fields per sweep, out of the dev agent's view
     state.json                        deployed policy, round counter, log
 """
 
@@ -384,6 +385,8 @@ class DreamRSI:
             str(hr),
             "--max-parallelism",
             str(self.c.max_parallelism),
+            "--instrumentation",  # outside policy_dev/, where the dev agent works (GAPS §3)
+            os.path.join(self.w, "instrumentation", os.path.basename(rdir)),
             "--betas",
             *map(str, self.c.betas),
         ]

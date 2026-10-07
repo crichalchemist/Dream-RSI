@@ -244,15 +244,14 @@ def test_versions_whose_next_live_plan_no_recorded_tree_covers_are_counted(toy_r
 
 def test_a_next_live_plan_that_raised_is_reported_with_its_error(tmp_path):
     """online() would stop on a deployed version whose plan_grid raises, so the report names the
-    error where the grid would be, never "not measured". D2a's evidence, with m2's sweep given
-    such an error, stands in for a run that recorded one."""
+    error where the grid would be, never "not measured". D2a's evidence, with an instrumentation
+    file giving m2 such an error, stands in for a run that recorded one."""
     workdir = tmp_path / "w"
     shutil.copytree(os.path.join(RECON, "evidence", "d2a-lasso", "workdir"), workdir)
-    path = workdir / "policy_dev" / "history" / "r0003_t01_m2" / "proposal_results"
-    sweep = json.loads((path / "beta_sweep.json").read_text())
+    path = workdir / "instrumentation" / "r0003_t01_m2"
+    path.mkdir(parents=True)
     error = 'Traceback (most recent call last):\n  File "method.py"\nRuntimeError: no plan\n'
-    sweep["next_live_plan"] = {"error": error}
-    (path / "beta_sweep.json").write_text(json.dumps(sweep))
+    (path / "instrumentation.json").write_text(json.dumps({"next_live_plan": {"error": error}}))
     report = report_run.build_report(str(workdir))
     m2 = report["versions"][-1]
     assert (m2["next_live_plan"], m2["next_beyond_support"], m2["next_live_plan_error"]) == (
@@ -552,15 +551,20 @@ def test_a_version_whose_live_plan_raised_is_counted_not_read_as_within_support(
     support."""
     rdir = tmp_path / "r0001_t01_m1"
     (rdir / "proposal_results").mkdir(parents=True)
-    episode = {"out_of_support": False, "error": None, "beyond_support": False}
+    episode = json.dumps({"out_of_support": False, "error": None}) + "\n"
+    (rdir / "proposal_results" / "policy_execution_traces.jsonl").write_text(2 * episode)
     fallback = {"branch_count": 2, "refine_count": 1, "fallback": True}
-    episodes = [
-        episode | {"live_plan": None, "live_plan_error": "TypeError: '>' not supported"},
-        episode | {"live_plan": fallback, "live_plan_error": None},
+    live = [
+        {
+            "live_plan": None,
+            "beyond_support": False,
+            "live_plan_error": "TypeError: '>' not supported",
+        },
+        {"live_plan": fallback, "beyond_support": False, "live_plan_error": None},
     ]
-    lines = "".join(json.dumps(e) + "\n" for e in episodes)
-    (rdir / "proposal_results" / "policy_execution_traces.jsonl").write_text(lines)
-    version = report_run.analyse_version(str(rdir), {}, (2, 1), set())
+    instrumentation = tmp_path / "instrumentation.json"
+    instrumentation.write_text(json.dumps({"episodes": live}))
+    version = report_run.analyse_version(str(rdir), {}, (2, 1), set(), str(instrumentation))
     assert (version["beyond_support"], version["live_plan_errors"]) == (0, 1)
 
 

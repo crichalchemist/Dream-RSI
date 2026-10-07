@@ -204,8 +204,12 @@ def analyse_iteration(workdir: str, run_dir: str, frozen: str, program: str) -> 
     return row, untouched, trace
 
 
-def analyse_version(rdir: str, grids: dict, fallback, selected: set) -> dict:
-    """One policy version: its sweep's validity and scores, and its clipped replay episodes."""
+def analyse_version(rdir: str, grids: dict, fallback, selected: set, instrumentation: str) -> dict:
+    """One policy version: its sweep's validity and scores, and its clipped replay episodes.
+
+    ``instrumentation`` is the version's instrumentation.json, which holds the live-plan family
+    apart from the files the policy-development agent reads.
+    """
     name = os.path.basename(rdir)
     _, t, m = name.split("_")
     results = os.path.join(rdir, "proposal_results")
@@ -213,11 +217,13 @@ def analyse_version(rdir: str, grids: dict, fallback, selected: set) -> dict:
     report = _json(report_path) if os.path.exists(report_path) else {}
     episodes = _jsonl(os.path.join(results, "policy_execution_traces.jsonl"))
     clipped = [e for e in episodes if e["out_of_support"]]
-    measured = bool(episodes) and all("beyond_support" in e for e in episodes)  # D2b onwards
-    beyond = [e for e in episodes if e.get("beyond_support")]
+    # absent for a sweep from before the file, or one that failed: "not measured"
+    live = _json(instrumentation) if os.path.exists(instrumentation) else {}
+    measured = bool(live.get("episodes"))
+    beyond = [e for e in live.get("episodes", []) if e["beyond_support"]]
     live_asked = {(e["live_plan"]["branch_count"], e["live_plan"]["refine_count"]) for e in beyond}
     # raised when asked without the trace fields, given that replay's history
-    raised = sum(1 for e in episodes if e.get("live_plan_error"))
+    raised = sum(1 for e in live.get("episodes", []) if e["live_plan_error"])
     asked = {
         (e["plan"]["branch_count"], e["plan"]["refine_count"]) if e["plan"] else tuple(fallback)
         for e in clipped
@@ -226,7 +232,7 @@ def analyse_version(rdir: str, grids: dict, fallback, selected: set) -> dict:
     # every episode's error, not beta_sweep.json's first three; the report's own when none ran
     errors = [e["error"] for e in episodes if e["error"]] or list(report.get("errors", []))
     # the grid online() would run next with this version deployed; absent before that measure
-    nxt = report.get("next_live_plan") or {}
+    nxt = live.get("next_live_plan") or {}
     raised_next = "error" in nxt
     return {
         "version": name,
@@ -386,7 +392,16 @@ def build_report(workdir: str, host_json: str | None = None, archive: str | None
         untouched += cases
         grids[trace.trace_id] = list(trace.grid)
     history = os.path.join(glob.escape(workdir), "policy_dev", "history", "r*")
-    versions = [analyse_version(r, grids, fallback, selected) for r in sorted(glob.glob(history))]
+    versions = [
+        analyse_version(
+            r,
+            grids,
+            fallback,
+            selected,
+            os.path.join(workdir, "instrumentation", os.path.basename(r), "instrumentation.json"),
+        )
+        for r in sorted(glob.glob(history))
+    ]
     flagged = [v for v in versions if v["clipped"]]
     beyond = [v for v in versions if v["beyond_support"]]
     next_beyond = [v for v in versions if v["next_beyond_support"]]

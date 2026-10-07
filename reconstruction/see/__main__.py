@@ -8,6 +8,8 @@ import sys
 
 from see.objective import DEFAULT_BETAS, DEFAULT_LAMBDA, beta_sweep, next_live_plan
 
+LIVE_PLAN = ("live_plan", "beyond_support", "live_plan_error")  # per episode, report only
+
 
 def cmd_sweep(a):
     from see.loader import load_policy, overrides_plan_grid
@@ -39,9 +41,20 @@ def cmd_sweep(a):
 
     fresh = load_pool(a.pool)
     width = a.max_parallelism if a.max_parallelism is not None else fresh[-1][0].max_parallelism
-    report["next_live_plan"] = next_live_plan(
-        fresh_policy, next_context(fresh, a.fallback, a.hard_max, width), [t.grid for t, _ in fresh]
-    )
+    # The live-plan family goes to its own file, apart from the two Listing 2 points the
+    # policy-development agent at (GAPS §3, "Live-plan signal in replay").
+    instrumentation = {
+        "beyond_support": report.pop("beyond_support"),
+        "next_live_plan": next_live_plan(
+            fresh_policy,
+            next_context(fresh, a.fallback, a.hard_max, width),
+            [t.grid for t, _ in fresh],
+        ),
+        "episodes": [
+            {"trace_id": e["trace_id"], "beta": e["beta"], **{k: e.pop(k) for k in LIVE_PLAN}}
+            for e in executions
+        ],
+    }
     report["plan_grid_override"] = overrides_plan_grid(cls)
     report["method"] = os.path.abspath(a.method)
     report["sha256"] = digest
@@ -51,6 +64,10 @@ def cmd_sweep(a):
     with open(os.path.join(a.out, "policy_execution_traces.jsonl"), "w") as f:
         for e in executions:
             f.write(json.dumps(e) + "\n")
+    where = a.instrumentation or a.out
+    os.makedirs(where, exist_ok=True)
+    with open(os.path.join(where, "instrumentation.json"), "w") as f:
+        json.dump(instrumentation, f, indent=1)
     p = report["pareto"]
     print(
         json.dumps(
@@ -105,6 +122,7 @@ def main(argv=None):
     s.add_argument("--fallback", type=int, nargs=2, default=(10, 10))
     s.add_argument("--hard-max", type=int, nargs=2, default=(32, 19))
     s.add_argument("--max-parallelism", type=int, default=None)  # default: the newest tree's
+    s.add_argument("--instrumentation", default=None)  # instrumentation.json's dir; default --out
     s.set_defaults(func=cmd_sweep)
     d = sub.add_parser("demo", help="run the whole loop on the toy task with scripted agents")
     d.add_argument("--workdir", required=True)

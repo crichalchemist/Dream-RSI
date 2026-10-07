@@ -1,4 +1,5 @@
 import dataclasses
+import glob
 import hashlib
 import json
 import os
@@ -109,11 +110,26 @@ def test_the_deployed_versions_next_live_plan_is_the_grid_online_runs_next(finis
     (GAPS §3, "Next live plan")."""
     log = finished_loop.state["log"]
     for live in (entry["live"] for entry in log[1:]):
-        path = os.path.join(finished_loop.w, "policy_dev", "history", live["policy_round"])
-        with open(os.path.join(path, "proposal_results", "beta_sweep.json")) as f:
+        path = os.path.join(finished_loop.w, "instrumentation", live["policy_round"])
+        with open(os.path.join(path, "instrumentation.json")) as f:
             planned = json.load(f)["next_live_plan"]
         grid = {k: planned[k] for k in ("branch_count", "refine_count")}
         assert (grid, planned["fallback"]) == (live["effective_grid"], live["used_fallback"])
+
+
+def test_no_file_the_policy_agent_works_in_holds_the_live_plan_family(finished_loop):
+    """The policy-development agent works in policy_dev/ and is pointed at its history; the
+    live-plan family is written under instrumentation/ instead, one file per swept version and
+    one for the floor (GAPS §3, "Live-plan signal in replay")."""
+    w = finished_loop.w
+    for root, _, files in os.walk(os.path.join(w, "policy_dev")):
+        for name in files:
+            with open(os.path.join(root, name), errors="replace") as f:
+                text = f.read()
+            assert "live_plan" not in text and "beyond_support" not in text, name
+    rounds = sorted(os.listdir(os.path.join(w, "policy_dev", "history")))
+    found = sorted(glob.glob(os.path.join(w, "instrumentation", "*", "instrumentation.json")))
+    assert [os.path.basename(os.path.dirname(p)) for p in found] == rounds
 
 
 def test_the_loop_sweeps_with_its_own_parallelism(finished_loop, tmp_path, monkeypatch):

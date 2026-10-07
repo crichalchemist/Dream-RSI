@@ -353,11 +353,15 @@ D2A_M2 = os.path.join(D2A, "policy_dev", "history", "r0003_t01_m2")
 D2A_CAPS = ("--fallback", "4", "3", "--hard-max", "6", "4")  # launches.jsonl's config
 
 
-def _sweep_d2a(method: str, out, *extra: str) -> dict:
+def _sweep_d2a(method: str, out, *extra: str) -> tuple[dict, dict]:
+    """beta_sweep.json and instrumentation.json of ``method`` swept over D2a's pool."""
     pool = os.path.join(D2A, "trace_pool")
     main(["sweep", "--method", method, "--pool", pool, "--out", str(out), *D2A_CAPS, *extra])
-    with open(os.path.join(out, "beta_sweep.json")) as f:
-        return json.load(f)
+    with (
+        open(os.path.join(out, "beta_sweep.json")) as f,
+        open(os.path.join(out, "instrumentation.json")) as g,
+    ):
+        return json.load(f), json.load(g)
 
 
 def test_d2as_deployed_version_plans_a_next_cycle_its_one_tree_does_not_cover(tmp_path):
@@ -365,17 +369,41 @@ def test_d2as_deployed_version_plans_a_next_cycle_its_one_tree_does_not_cover(tm
     that one tree no history, so no m2 episode is beyond support; the next live plan, made with
     iteration 1's manifest, is 4 x 4 and flagged, and the reward is the one D2a recorded (GAPS §3,
     "Next live plan")."""
-    report = _sweep_d2a(os.path.join(D2A_M2, "method.py"), tmp_path)
+    report, live = _sweep_d2a(os.path.join(D2A_M2, "method.py"), tmp_path)
     with open(os.path.join(D2A_M2, "proposal_results", "beta_sweep.json")) as f:
         recorded = json.load(f)
-    assert report["next_live_plan"] == {
+    assert live["next_live_plan"] == {
         "branch_count": 4,
         "refine_count": 4,
         "fallback": False,
         "beyond_support": True,
     }
-    assert (report["beyond_support"], report["valid"]) == (False, True)
+    assert (live["beyond_support"], report["valid"]) == (False, True)
     assert report["pareto"]["reward"] == recorded["pareto"]["reward"]
+
+
+def test_the_live_plan_family_is_written_apart_from_the_files_the_policy_agent_reads(tmp_path):
+    """Listing 2 points the policy-development agent at beta_sweep.json and
+    policy_execution_traces.jsonl; the live-plan family, which the paper's agent never saw, goes to
+    instrumentation.json instead, one entry per episode in the same order. out_of_support stays
+    where D2a's agent saw it (GAPS §3, "Live-plan signal in replay")."""
+    out, hidden = tmp_path / "out", tmp_path / "hidden"
+    method, pool = os.path.join(D2A_M2, "method.py"), os.path.join(D2A, "trace_pool")
+    where = ("--out", str(out), "--instrumentation", str(hidden))
+    main(["sweep", "--method", method, "--pool", pool, *where, *D2A_CAPS])
+    with open(out / "beta_sweep.json") as f:
+        report = json.load(f)
+    with open(out / "policy_execution_traces.jsonl") as f:
+        episodes = [json.loads(line) for line in f]
+    with open(hidden / "instrumentation.json") as f:
+        live = json.load(f)
+    family = {"live_plan", "beyond_support", "live_plan_error", "next_live_plan"}
+    assert family.isdisjoint(report) and all(family.isdisjoint(e) for e in episodes)
+    assert "out_of_support" in report and all("out_of_support" in e for e in episodes)
+    assert [(e["trace_id"], e["beta"]) for e in live["episodes"]] == [
+        (e["trace_id"], e["beta"]) for e in episodes
+    ]
+    assert live["next_live_plan"]["beyond_support"] and not (out / "instrumentation.json").exists()
 
 
 RAISES_WITH_HISTORY = """
@@ -404,10 +432,10 @@ def test_a_next_live_plan_that_raises_is_recorded_and_the_sweep_scores_as_withou
     the raise, since the measure is reported and never selects."""
     for name, source in (("raises", RAISES_WITH_HISTORY), ("twin", PARALLEL_REFINE)):
         (tmp_path / f"{name}.py").write_text(source)
-    raises = _sweep_d2a(str(tmp_path / "raises.py"), tmp_path / "raises")
-    twin = _sweep_d2a(str(tmp_path / "twin.py"), tmp_path / "twin")
-    assert "RuntimeError: no plan with history" in raises["next_live_plan"]["error"]
-    assert "error" not in twin["next_live_plan"]
+    raises, raises_live = _sweep_d2a(str(tmp_path / "raises.py"), tmp_path / "raises")
+    twin, twin_live = _sweep_d2a(str(tmp_path / "twin.py"), tmp_path / "twin")
+    assert "RuntimeError: no plan with history" in raises_live["next_live_plan"]["error"]
+    assert "error" not in twin_live["next_live_plan"]
     assert (raises["valid"], raises["errors"], raises["pareto"]) == (
         twin["valid"],
         twin["errors"],
@@ -445,7 +473,7 @@ def _synthetic_sweep(tmp_path, source: str, widths, *extra: str) -> dict:
     out = tmp_path / f"out{len(list(tmp_path.glob('out*')))}"
     caps = ("--fallback", "2", "1", "--hard-max", "8", "8")
     main(["sweep", "--method", str(method), "--pool", str(pool), "--out", str(out), *caps, *extra])
-    with open(out / "beta_sweep.json") as f:
+    with open(out / "instrumentation.json") as f:  # --instrumentation defaults to --out
         return json.load(f)["next_live_plan"]
 
 
@@ -506,14 +534,14 @@ def test_a_next_live_plan_in_numpy_integers_is_recorded_and_the_sweep_scores_as_
     could not write would have turned a valid version into minus infinity."""
     for name, source in (("numpy", NUMPY_WITH_HISTORY), ("twin", PARALLEL_REFINE)):
         (tmp_path / f"{name}.py").write_text(source)
-    numpy_plan = _sweep_d2a(str(tmp_path / "numpy.py"), tmp_path / "numpy")
-    twin = _sweep_d2a(str(tmp_path / "twin.py"), tmp_path / "twin")
+    numpy_plan, numpy_live = _sweep_d2a(str(tmp_path / "numpy.py"), tmp_path / "numpy")
+    twin, _ = _sweep_d2a(str(tmp_path / "twin.py"), tmp_path / "twin")
     assert (numpy_plan["valid"], numpy_plan["errors"], numpy_plan["pareto"]) == (
         twin["valid"],
         twin["errors"],
         twin["pareto"],
     )
-    assert numpy_plan["next_live_plan"] == {
+    assert numpy_live["next_live_plan"] == {
         "branch_count": 4,
         "refine_count": 3,
         "fallback": False,
@@ -546,8 +574,8 @@ def test_the_next_live_plan_is_made_by_a_freshly_loaded_policy_as_online_makes_i
     """online() loads the deployed file afresh in its own process, so what a policy's class kept
     from the sweep's episodes cannot reach its next live plan: 4 x 3 here, not 4 x 4."""
     (tmp_path / "method.py").write_text(PLANS_FROM_SOLVED_STATE)
-    report = _sweep_d2a(str(tmp_path / "method.py"), tmp_path / "out")
-    plan = report["next_live_plan"]
+    _, live = _sweep_d2a(str(tmp_path / "method.py"), tmp_path / "out")
+    plan = live["next_live_plan"]
     assert (plan["branch_count"], plan["refine_count"]) == (4, 3)
 
 
@@ -582,8 +610,8 @@ def test_what_planning_the_next_cycle_changes_cannot_change_the_versions_score(t
     marker = tmp_path / "planned_with_history"
     (tmp_path / "state.py").write_text(STATE_FROM_PLANNING.format(marker=str(marker)))
     (tmp_path / "twin.py").write_text(PARALLEL_REFINE)
-    state = _sweep_d2a(str(tmp_path / "state.py"), tmp_path / "state")
-    twin = _sweep_d2a(str(tmp_path / "twin.py"), tmp_path / "twin")
+    state, _ = _sweep_d2a(str(tmp_path / "state.py"), tmp_path / "state")
+    twin, _ = _sweep_d2a(str(tmp_path / "twin.py"), tmp_path / "twin")
     assert (state["valid"], state["errors"], state["pareto"]) == (
         twin["valid"],
         twin["errors"],

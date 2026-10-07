@@ -200,15 +200,11 @@ class DreamRSI:
         plan = validate_plan(policy.plan_grid(ctx), ctx)
         grid = (plan.branch_count, plan.refine_count) if plan else tuple(self.c.fallback_grid)
         # before any evaluation or agent call: what the freeze will record about the plan must be
-        # writable, or the whole cycle would run and then fail to freeze (GAPS §3, "Grid counts")
+        # writable, or the whole cycle would run and then fail to freeze (GAPS §3, "Grid counts");
+        # the freeze writes this same record, so nothing solve() does to the policy can change it
+        record = self._plan_record(policy, plan, grid)
         try:
-            json.dumps(
-                {
-                    "beta": getattr(policy, "beta", None),
-                    "planned_grid": dataclasses.asdict(plan) if plan else None,
-                    "effective_grid": grid,
-                }
-            )
+            json.dumps(record)
         except (TypeError, ValueError) as e:
             raise RuntimeError(
                 f"iteration {t}: the deployed policy's plan cannot be recorded ({e}); "
@@ -245,7 +241,7 @@ class DreamRSI:
             partial = os.path.join(run_dir, "partial")
             os.makedirs(partial, exist_ok=True)
             error = f"{type(e).__name__}: {e}"
-            manifest = self._manifest(t, policy, plan, grid, q, error, started)
+            manifest = self._manifest(t, record, q, error, started)
             manifest["partial"] = True
             self._freeze(
                 q, partial, f"iter{t:04d}-partial", {"iteration": t, "partial": True}, manifest
@@ -253,7 +249,7 @@ class DreamRSI:
             raise
         if error is None and q.fault is not None:  # the policy swallowed the batch's fault
             error = f"batch abandoned: {q.fault}"
-        manifest = self._manifest(t, policy, plan, grid, q, error, started)
+        manifest = self._manifest(t, record, q, error, started)
         os.makedirs(out)
         self._freeze(q, out, f"iter{t:04d}", {"iteration": t}, manifest)
         current = os.path.join(self.pool, "_current")
@@ -263,14 +259,21 @@ class DreamRSI:
         self.state["log"].append({"iteration": t, "live": manifest})
         return manifest
 
-    def _manifest(self, t, policy, plan, grid, q: LiveQuestion, error, started) -> dict:
+    @staticmethod
+    def _plan_record(policy, plan, grid) -> dict:
+        """What the manifest records about the plan: checked before the cycle, frozen after it."""
         return {
-            "iteration": t,
-            "policy_round": self.state.get("deployed_round", "initial"),
             "beta": getattr(policy, "beta", None),
             "planned_grid": dataclasses.asdict(plan) if plan else None,
             "used_fallback": plan is None,
             "effective_grid": {"branch_count": grid[0], "refine_count": grid[1]},
+        }
+
+    def _manifest(self, t, record: dict, q: LiveQuestion, error, started) -> dict:
+        return {
+            "iteration": t,
+            "policy_round": self.state.get("deployed_round", "initial"),
+            **record,
             **q.manifest_stats(),
             "error": error,
             "started": started,

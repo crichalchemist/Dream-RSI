@@ -138,8 +138,8 @@ prompts from `generated/`, which is why extraction is a prerequisite.
 - `LoopConfig.serialize_eval=True` by default: evaluations are serialized because timing-based
   tasks interfere with each other. Do not parallelize evaluation for Lasso or kernel tasks.
 - An interrupted iteration cannot be resumed: `online()` raises if `runs/iterNNNN/`,
-  `trace_pool/iterNNNN/` or any archive of the iteration `policy_dev/history/r*_tNN_m*/`
-  already exists, naming every one that does. Ctrl-C, SIGTERM and SIGHUP (the entry points call
+  `trace_pool/iterNNNN/`, any archive of the iteration `policy_dev/history/r*_tNN_m*/` or its
+  `instrumentation/r*_tNN_m*/` already exists, naming every one that does. Ctrl-C, SIGTERM and SIGHUP (the entry points call
   `install_signal_handlers()`; a SIGHUP inherited ignored, as under nohup, stays ignored) kill the
   running agents' process groups and freeze what was collected under `runs/iterNNNN/partial/`,
   never into the pool; an interrupt before the first attempt (planning, baseline evaluation)

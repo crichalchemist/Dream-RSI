@@ -585,17 +585,17 @@ def test_copy_evidence_does_not_follow_a_symlink_out_of_the_workdir(tmp_path):
 
 
 def test_the_evidence_subset_carries_no_program_and_withholds_a_quoted_one(toy_run):
-    """44 files: state.json and launches.jsonl; three per frozen iteration (6); eight score.json;
+    """50 files: state.json and launches.jsonl; three per frozen iteration (6); eight score.json;
     three error.txt (the two untouched attempts, the deleted program); seven of eight proposals;
-    method.py and two sweep files for each of six versions (18). SimpleTES programs are AGPL and
-    stay out."""
+    method.py and two sweep files for each of six versions (18), and each version's
+    instrumentation file (6). SimpleTES programs are AGPL and stay out."""
     report, out = toy_run
     copied = [f for _, _, files in os.walk(out / "workdir") for f in files]
     assert PROGRAM not in copied
-    assert len(copied) == 44
+    assert (len(copied), copied.count("instrumentation.json")) == (50, 6)
     evidence = report["evidence"]
     assert (evidence["copied"], evidence["withheld"]) == (
-        44,
+        50,
         ["runs/iter0002/tree/attempt_b000_a001/proposal.md"],
     )
     # the toy run quotes no source and no address; its paths lie under the temp directory

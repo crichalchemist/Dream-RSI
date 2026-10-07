@@ -940,6 +940,20 @@ def test_restart_refuses_when_any_archive_of_the_iteration_exists(tmp_path, stub
     assert agent.targets == []
 
 
+def test_restart_refuses_when_an_iterations_instrumentation_exists(tmp_path, stub_prompts):
+    """Each archive's live-plan fields are written under instrumentation/, outside policy_dev/:
+    one an aborted iteration left is named like the archive itself, glob characters in the
+    workdir or not, so a restart never overwrites it silently."""
+    work = tmp_path / "run[1]"
+    agent = _RecordingAgent()
+    loop = _interruptible_loop(str(work), agent)
+    for name in (archive_name(3, 1, 1), archive_name(1, 2, 0), "baseline"):  # only t01 matters
+        (work / "instrumentation" / name).mkdir(parents=True)
+    with pytest.raises(RuntimeError, match=r"instrumentation/r0003_t01_m1 exists: .*delete it"):
+        loop.online(1)
+    assert agent.targets == []
+
+
 def test_restart_guard_and_manifests_survive_glob_characters_in_the_workdir(tmp_path, stub_prompts):
     """A workdir such as run[1] must neither make the guard's glob match nothing, which would let
     a restart overwrite the aborted archive, nor hide the pool's manifests from planning."""

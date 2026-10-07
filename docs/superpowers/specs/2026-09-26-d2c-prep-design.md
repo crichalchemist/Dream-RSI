@@ -163,9 +163,10 @@ numpy counts and non-integers with a pointer to the new row.
     failed sweeps.
   - The inline fields were only ever written by toy runs, so there is no reader for them.
 - **What it shows.** The report's outputs, headline, columns and wording are unchanged.
-- **Evidence.** `--copy-evidence` adds `instrumentation/*/instrumentation.json` to its allowlist.
-  The existing redaction applies to it, and matters here because `live_plan_error` tracebacks
-  carry paths.
+- **Evidence.** `--copy-evidence` adds `instrumentation/r*/instrumentation.json` to its allowlist.
+  The floor's `instrumentation/baseline/` is left out, as `policy_dev/history/baseline/` already
+  is. Every allowlisted file passes through the same redaction, which matters here because
+  `live_plan_error` tracebacks carry paths.
 
 ### 4.5 Ledger and docs
 

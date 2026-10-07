@@ -46,6 +46,7 @@ EVIDENCE = (
     "policy_dev/history/r*/method.py",
     "policy_dev/history/r*/proposal_results/beta_sweep.json",
     "policy_dev/history/r*/proposal_results/policy_execution_traces.jsonl",
+    "instrumentation/r*/instrumentation.json",
 )
 PROGRAM_MARKER = (
     "CPP_CODE"  # opens every SimpleTES Lasso program (AGPL); a file quoting it stays out

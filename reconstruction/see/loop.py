@@ -169,7 +169,10 @@ class DreamRSI:
         # once already, and a restart's offline() would recreate the first one (r{round+1}_tNN_m0),
         # because the round counter is persisted only on success
         archives = sorted(glob.glob(os.path.join(glob.escape(self.dev_history), f"r*_t{t:02d}_m*")))
-        existing = [p for p in (run_dir, out, *archives) if os.path.exists(p)]
+        # each archive's live-plan fields sit outside policy_dev/, and are named with it
+        where = os.path.join(glob.escape(self.w), "instrumentation", f"r*_t{t:02d}_m*")
+        instrumentation = sorted(glob.glob(where))
+        existing = [p for p in (run_dir, out, *archives, *instrumentation) if os.path.exists(p)]
         if existing:
             one = len(existing) == 1
             raise RuntimeError(

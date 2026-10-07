@@ -29,7 +29,19 @@ python -m pytest -q tests/test_loop.py::test_on_policy_replay_reproduces_the_liv
 python -m see demo --workdir /tmp/drsi                                          # whole loop, toy task, ~8s
 python -m see sweep --method my_policy.py --pool runs/lasso/trace_pool --out /tmp/sweep
 python scripts/report_run.py --workdir runs/lasso --out /tmp/report   # D2's four questions
+ruff check . && ruff format --check . && pyright   # the CI lint/type gate, as CI runs it
 ```
+
+- CI (`.github/workflows/ci.yml`: Ubuntu 3.10 and 3.13, macOS 3.13) runs pytest with `--junitxml`,
+  then `tools/check_junit.py report.xml --expect N`, which fails on any skip, error or a test count
+  other than N. Adding, removing or parametrizing a test means bumping `--expect` in the same commit.
+- Python 3.10 is the floor (`requires-python`, ruff `py310`, pyright `pythonVersion`): no 3.11+ syntax.
+- `pymupdf` is pinned because `tools/generated.sha256` depends on its extraction output; after a
+  bump, rewrite the manifest with `python tools/extract_listings.py --write-manifest`.
+- `.pre-commit-config.yaml` lives at the repo root and calls `reconstruction/.venv/bin/pyright`
+  directly, so the venv must exist at exactly that path for commits to pass.
+- Designs and plans for each deliverable (D1, D2a, D2c…) live in `docs/superpowers/specs/` and
+  `docs/superpowers/plans/`; read the current one before working on its branch.
 
 - Without `generated/`, `see demo` and `see/prompts.py` raise `FileNotFoundError`; the test suite
   no longer depends on it (`tests/conftest.py`'s `stub_prompts` fixture stands in for the real

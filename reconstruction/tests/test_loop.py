@@ -1023,6 +1023,7 @@ def test_the_demo_entry_point_maps_sigterm_to_the_partial_freeze(tmp_path, stub_
     p = subprocess.Popen(
         [sys.executable, "-c", program, str(work)],
         cwd=str(tmp_path),
+        env={**os.environ, "PYTHON_COLORS": "0"},  # FORCE_COLOR would split the traceback text
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

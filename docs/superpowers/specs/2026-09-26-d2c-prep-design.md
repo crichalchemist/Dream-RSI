@@ -251,3 +251,18 @@ taken with `NO_COLOR=1` so that no ANSI codes reach `ci.yml`.
 - An atomic freeze (§3.2).
 - Other D2c hand-forward items, which stay on that list: redaction on the run host, the Linux
   temp-path rule, reviewing `agent_stderr`, spread labels, and counting default-beta live plans.
+
+## 8. Results recorded while planning (2026-09-26)
+
+- **The two timing tests did not reproduce.** The runs, from `reconstruction/` in the venv, each
+  under eight `python -c "while True: pass" &` loops on this 8-core host:
+  - each test alone, 50 times: 0 failures, with the load average reaching 15. The command was
+    `python -m pytest -q -p no:cacheprovider --color=no "tests/test_command_agent.py::$t"`, with
+    each of the two names as `$t`;
+  - the whole module, 20 times: 0 failures, with the load average reaching 49.5. The command was
+    `python -m pytest -q -p no:cacheprovider --color=no tests/test_command_agent.py`.
+
+  Per §5, neither test changes. Both stay on the D2c hand-forward with these commands. Their
+  D2b failures came during full-suite runs, so the cause may be something other than CPU load.
+- **The colour test** fails with `FORCE_COLOR=3` set and passes once its child runs with
+  `PYTHON_COLORS=0`.

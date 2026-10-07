@@ -218,6 +218,23 @@ class Float32Beta(ParallelRefine):
         self.beta = np.float32(0.5)
 """
 
+BETA_REBOUND_IN_SOLVE = """
+import numpy as np
+from see.policies.parallel_refine import ParallelRefine
+
+NAME = "BetaReboundInSolve"
+
+
+class BetaReboundInSolve(ParallelRefine):
+    def __init__(self, config=None):
+        super().__init__(config)
+        self.beta = 0.5
+
+    def solve(self, question, budget=None):
+        self.beta = np.float32(self.beta)
+        return super().solve(question, budget)
+"""
+
 
 @pytest.mark.parametrize("source", [UNRECORDABLE_REASON, FLOAT32_BETA], ids=["reason", "beta"])
 def test_a_plan_the_freeze_cannot_record_is_refused_before_anything_runs(
@@ -247,6 +264,21 @@ def test_a_plan_the_freeze_cannot_record_is_refused_before_anything_runs(
     work = tmp_path / "w"
     assert (evaluated, called, (work / "runs" / "iter0001").exists()) == ([], [], False)
     assert os.listdir(work / "trace_pool") == []
+
+
+def test_a_policy_that_rebinds_beta_while_solving_still_freezes_its_cycle(tmp_path, stub_prompts):
+    """The record online() checks before any attempt is the record the freeze writes, so what
+    solve() does to the policy afterwards cannot un-record the plan: the cycle is frozen whole,
+    with the beta it was planned with (GAPS §3, "Grid counts")."""
+    cfg = _numbers_config(tmp_path, BETA_REBOUND_IN_SOLVE)
+    loop = DreamRSI(
+        cfg, make_task(cfg.workdir), ScriptedDiscoveryAgent(seed=7), ScriptedPolicyAgent()
+    )
+    loop.online(1)
+    frozen = tmp_path / "w" / "trace_pool" / "iter0001"
+    manifest = json.loads((frozen / "live_cycle_manifest.json").read_text())
+    assert (manifest["beta"], type(manifest["beta"])) == (0.5, float)
+    assert Trace.load(str(frozen / "trace.json")).grid == (2, 1)
 
 
 def test_agent_crash_is_a_failed_attempt_not_a_failed_episode(tmp_path, stub_prompts):
